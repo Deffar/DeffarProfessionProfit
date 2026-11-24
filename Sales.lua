@@ -1,4 +1,4 @@
--- Forever Profession Profit: what selling at the auction house really brings in. A ledger per item name, shown as the "AH sales" tab of the luck window (LuckUI.lua):
+-- Deffar Profession Profit: what selling at the auction house really brings in. A ledger per item name, shown as the "AH sales" tab of the luck window (LuckUI.lua):
 --
 --   p  units put up for sale (a unit put up again after it came back counts once: see r)   a  auctions posted
 --   r  units put up again after coming back unsold (cancel, expiry); e - r is what is back and not up again
@@ -11,7 +11,7 @@
 -- p - s - e. It is only what happened while this addon was loaded: units posted before then have no deposit on record, and a
 -- sale or return with more units than posted is marked so (the "*" in the window).
 --
--- Where each number comes from (all UNVERIFIED on Forever, FOR-0197; /fpp salestrace prints every step):
+-- Where each number comes from (all UNVERIFIED on Forever, FOR-0197; /dpp salestrace prints every step):
 --   posting   hooksecurefunc on C_AuctionHouse.PostCommodity / PostItem (declared in the client's AuctionHouseDocumentation):
 --             the item is read from the ItemLocation, the deposit from CalculateCommodityDeposit / CalculateItemDeposit; the
 --             post counts once AUCTION_HOUSE_AUCTION_CREATED is seen (a failed post must not cost a deposit). Until that event
@@ -25,7 +25,7 @@ local S = {}
 F.Sales = S
 
 S.session = {}
-S.counts = { posts = 0, created = 0, sold = 0, returned = 0, dropped = 0 }   -- for /fpp status
+S.counts = { posts = 0, created = 0, sold = 0, returned = 0, dropped = 0 }   -- for /dpp status
 S.pending = {}        -- posts waiting for the game to say they went through: { name, id, units, deposit, time }
 local MAX = 2147483647
 local CONFIRM_WAIT = 4
@@ -430,7 +430,7 @@ function S.Hooked()
     return list
 end
 
--- A line for /fpp status.
+-- A line for /dpp status.
 function S.StatusText()
     local c = S.counts
     return string.format("AH sales: %d of 5 hook(s) installed; this session %d post(s) seen, %d counted as created, %d not counted, %d sale mail(s) and %d returned mail(s) read; the creation event %s.",

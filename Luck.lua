@@ -1,4 +1,4 @@
--- Forever Profession Profit: the luck counter. Counts every craft of a saved cooking recipe from the game's own
+-- Deffar Profession Profit: the luck counter. Counts every craft of a saved cooking recipe from the game's own
 -- chat line ("You create: [Tender Wolf Steak]." or "You create: [Tender Wolf Steak]x2.") and records
 -- whether Master Chef's extra result happened, split by Master Chef rank, for this session (memory only),
 -- this character and the whole account.
@@ -538,7 +538,7 @@ end
 
 ---------------------------------------------------------------------------
 -- Disenchanting (FOR-0192). Counted from three things the game sends, all HYPOTHESES on Forever until seen (FOR-0192;
--- `/fpp status` shows how many of each were seen):
+-- `/dpp status` shows how many of each were seen):
 --   * UNIT_SPELLCAST_SENT for the Disenchant spell (13262, the classic ID): its second argument names the target item,
 --     which is found in the bags to get its item ID. Two pieces of one item with different suffixes share the item ID, so
 --     they are one row, named by the item's own name without the suffix (F.ItemMeta).
@@ -551,7 +551,7 @@ end
 
 L.DE_BASE = 1000000000
 L.DISENCHANT_SPELL = 13262
--- what was seen, for /fpp status: casts of the spell, items found by name / by what left the bags, loot lines seen while a
+-- what was seen, for /dpp status: casts of the spell, items found by name / by what left the bags, loot lines seen while a
 -- disenchant was being counted, Enchanting materials among them, those that arrived before the cast finished
 L.de = { casts = 0, byName = 0, byBags = 0, missing = 0, lines = 0, attributed = 0, early = 0, done = 0, noTarget = 0, counted = 0 }
 local deTarget   -- { id = itemID or nil, before = bag snapshot, time } of the cast in progress

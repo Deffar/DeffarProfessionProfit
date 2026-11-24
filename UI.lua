@@ -1,4 +1,4 @@
--- Forever Profession Profit: the window (/fpp). Same flat look as Forever Delete Junk and Forever Loot Value
+-- Deffar Profession Profit: the window (/dpp). Same flat look as Forever Delete Junk and Forever Loot Value
 -- (black 0.92 panel, 1px grey edge, gold title, dark rows, flat square buttons and checkboxes).
 -- A sortable, paged list of the current character's learned recipes (a tab per profession: Cooking, and
 -- Engineering for items a vendor buys) with what they cost, what the item sells for to a vendor, and the
@@ -1486,7 +1486,7 @@ local function ShowShoppingTip(button)
     GameTooltip:AddLine(" ")
     local planned = ctx.plan and ctx.plan.crafts or ctx.crafts
     GameTooltip:AddDoubleLine("Aims for", string.format("%d%% odds of finishing ahead over %d crafts", ctx.odds, planned), 0.7, 0.7, 0.73, 1, 1, 1)
-    GameTooltip:AddDoubleLine("Buys for", ctx.fill and "as many crafts as the budget allows" or (ctx.crafts .. " crafts (/fpp buy)"), 0.7, 0.7, 0.73, 1, 1, 1)
+    GameTooltip:AddDoubleLine("Buys for", ctx.fill and "as many crafts as the budget allows" or (ctx.crafts .. " crafts (/dpp buy)"), 0.7, 0.7, 0.73, 1, 1, 1)
     GameTooltip:AddDoubleLine("And at least", string.format("%d%% margin on cost", ctx.margin), 0.7, 0.7, 0.73, 1, 1, 1)
     GameTooltip:AddDoubleLine("Budget", ctx.budget and F.Money(ctx.budget) or "no limit (gold unreadable)", 0.7, 0.7, 0.73, 1, 1, 1)
     if ctx.plan then
@@ -1558,7 +1558,7 @@ local function Toggle(key)
 end
 
 local function Build()
-    frame = CreateFrame("Frame", "ForeverProfessionProfitFrame", UIParent)
+    frame = CreateFrame("Frame", "DeffarProfessionProfitFrame", UIParent)
     frame:SetSize(MIN_WIDTH, FOOT_Y + 90)
     frame:SetFrameStrata("DIALOG")
     frame:SetToplevel(true)
@@ -1568,7 +1568,7 @@ local function Build()
     frame:EnableMouseWheel(true)
     frame:Hide()
     Box(frame, {0, 0, 0, 0.92}, {0.20, 0.20, 0.20})
-    if type(UISpecialFrames) == "table" then UISpecialFrames[#UISpecialFrames + 1] = "ForeverProfessionProfitFrame" end
+    if type(UISpecialFrames) == "table" then UISpecialFrames[#UISpecialFrames + 1] = "DeffarProfessionProfitFrame" end
 
     frame.measure = Text(frame, nil, TEXT)   -- never shown: only used to measure text widths
     frame.measure:Hide()
@@ -1935,7 +1935,7 @@ local function Build()
                 if type(IsControlKeyDown) == "function" and IsControlKeyDown() then   -- Ctrl-click: this cannot be disenchanted
                     if type(GameTooltip) == "table" then GameTooltip:Hide() end
                     F.Disenchant.Block(self.data.itemID, self.data.item and self.data.item.name)
-                    F.Print((self.data.item and self.data.item.name or ("item " .. self.data.itemID)) .. " hidden: it cannot be disenchanted (/fpp nodisenchant remove [item] undoes it).")
+                    F.Print((self.data.item and self.data.item.name or ("item " .. self.data.itemID)) .. " hidden: it cannot be disenchanted (/dpp nodisenchant remove [item] undoes it).")
                     return
                 end
                 F.Disenchant.Search(self.data)   -- the Enchanting tab: search the auction house
@@ -2085,7 +2085,7 @@ local function Build()
     frame.next:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE + 32, -(FOOT_Y + 8))
     frame.pageText = Text(frame, nil, GREY)
     frame.pageText:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE + 70, -(FOOT_Y + 11))
-    -- opens the luck window (/fpp luck), at the right end of the page row
+    -- opens the luck window (/dpp luck), at the right end of the page row
     frame.luckButton = MakeButton(frame, "Luck", 64, 18)
     frame.luckButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -SIDE, -(FOOT_Y + 8))
     frame.luckButton:SetScript("OnClick", function() F.LuckUI.OpenFrom(frame) end)   -- this window hides, the luck window takes its place
@@ -2173,7 +2173,7 @@ function U.Toggle()
 end
 
 -- The luck window's back button: this window opens with its top left where the luck window's was. That
--- position is not saved (dragging the window still saves its own, which /fpp uses). Plain screen coordinates, as in LuckUI.PlaceBeside.
+-- position is not saved (dragging the window still saves its own, which /dpp uses). Plain screen coordinates, as in LuckUI.PlaceBeside.
 function U.ShowAt(left, top)
     U.Show()
     if frame and F.Number(left) and F.Number(top) then
@@ -2182,7 +2182,7 @@ function U.ShowAt(left, top)
     end
 end
 
--- Switches the list to a profession's tab (a click on a tab, or /fpp cooking | engineering); true when it exists.
+-- Switches the list to a profession's tab (a click on a tab, or /dpp cooking | engineering); true when it exists.
 function U.SelectTab(key)
     if not F.PROFESSIONS[key] then return false end
     if key == "enchanting" and F.db.tab ~= "enchanting" then F.Disenchant.Invalidate() end   -- a fresh list on arriving
@@ -2210,7 +2210,7 @@ function U.Detail()
     return out
 end
 
--- What the current page shows, as text (tests and /fpp status).
+-- What the current page shows, as text (tests and /dpp status).
 function U.Visible()
     local out = {}
     if not frame then return out end

@@ -1,6 +1,6 @@
-# Forever Profession Profit
+# Deffar Profession Profit
 
-Find out which profession crafts are actually worth your time. Open it with `/fpp`.
+Find out which profession crafts are actually worth your time. Open it with `/dpp`.
 
 A World of Warcraft: Forever addon.
 
@@ -16,7 +16,7 @@ A World of Warcraft: Forever addon.
 ## Notes
 - Open each profession window once so your recipes are saved, and visit vendors so their prices are saved.
 - Auctionator is optional but gives the most useful prices.
-- `/fpp` opens the window. `/fpp status` shows what was read and saved.
+- `/dpp` opens the window. `/dpp status` shows what was read and saved.
 
 ## Install
-Copy the `ForeverProfessionProfit` folder into `World of Warcraft\_forever_\Interface\AddOns\`.
+Copy the `DeffarProfessionProfit` folder into `World of Warcraft\_forever_\Interface\AddOns\`.

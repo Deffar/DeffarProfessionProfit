@@ -1,4 +1,4 @@
--- Forever Profession Profit: a "+" button beside the profession window that presses Create All on the most profitable craft the player has
+-- Deffar Profession Profit: a "+" button beside the profession window that presses Create All on the most profitable craft the player has
 -- the materials for, without selecting the recipe first.
 --
 -- How: the button sits on the profession window (ProfessionsFrame) when it is one of the saved professions (Cooking, Engineering,
@@ -237,7 +237,7 @@ function C.Place()
 end
 
 -- Creates the button on the profession window the first time it is needed (ProfessionsFrame is the usual name; with no such frame there
--- is no button and /fpp status says so).
+-- is no button and /dpp status says so).
 function C.EnsureButton()
     if C.button then return C.button end
     local parent = _G.ProfessionsFrame

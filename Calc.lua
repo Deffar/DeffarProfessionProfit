@@ -1,4 +1,4 @@
--- Forever Profession Profit: the arithmetic. Pure functions only: no game calls, no frames, no saved data,
+-- Deffar Profession Profit: the arithmetic. Pure functions only: no game calls, no frames, no saved data,
 -- so a test can load this file alone. Prices come in through the `env` table Data.lua builds.
 --
 -- Master Chef (Forever legacy Professions tree, FOR-0174): each rank, 0-5, gives a 10% chance that

@@ -1,4 +1,4 @@
--- Forever Profession Profit: the Enchanting tab. Not recipes but a buy list: every weapon and armour piece in Auctionator's last
+-- Deffar Profession Profit: the Enchanting tab. Not recipes but a buy list: every weapon and armour piece in Auctionator's last
 -- scan, ranked by what disenchanting it is worth against what it costs at the auction house.
 --
 -- The odds are Auctionator's own: it ships a Forever disenchant table (Source_Classic\Enchant, loaded for game type
@@ -19,7 +19,7 @@ F.Disenchant = D
 -- Every item that pays is kept; of the ones that lose money only the best, up to this many rows in all. (Cutting by absolute profit
 -- first hid the cheap items with a high return behind expensive ones with a tiny one.)
 -- Items that cannot be disenchanted although they are weapons or armour of the right quality. Built in by name (lower case, the item's own name), and the
--- player can add more: `db.noDisenchant[itemID] = name`, with a Ctrl-click on a row or /fpp nodisenchant.
+-- player can add more: `db.noDisenchant[itemID] = name`, with a Ctrl-click on a row or /dpp nodisenchant.
 D.NEVER = { ["lesser magic wand"] = true, ["greater magic wand"] = true, ["lesser mystic wand"] = true, ["greater mystic wand"] = true }   -- the enchanter-made wands
 
 function D.Blocked(itemID, name)
@@ -340,7 +340,7 @@ local function Build()
     return rows, info
 end
 
--- /fpp de: what the tab saw in Auctionator's data, to tell a bug from an auction house without bargains.
+-- /dpp de: what the tab saw in Auctionator's data, to tell a bug from an auction house without bargains.
 function D.Report()
     local lines = {}
     if not D.Available() then
@@ -607,7 +607,7 @@ function D.TipLines(tip, d)
 end
 
 -- Makes the Auctionator list "Profession Profit - Disenchant" with this one item, at the highest price that still leaves the
--- margin on cost (/fpp margin, default 10%), and searches it when the auction house is open (as the [A] button does).
+-- margin on cost (/dpp margin, default 10%), and searches it when the auction house is open (as the [A] button does).
 function D.Search(row)
     local api = F.ShoppingAPI and F.ShoppingAPI()
     if not api then

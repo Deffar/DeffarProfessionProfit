@@ -1,5 +1,5 @@
--- Forever Profession Profit: the look the windows share. One place for the tooltip palette and the helpers that build tooltip text, used by the main window (UI.lua) and
--- the luck window (LuckUI.lua). A new window or tooltip uses these instead of choosing colours of its own; plans/addons/ForeverProfessionProfit.md
+-- Deffar Profession Profit: the look the windows share. One place for the tooltip palette and the helpers that build tooltip text, used by the main window (UI.lua) and
+-- the luck window (LuckUI.lua). A new window or tooltip uses these instead of choosing colours of its own; plans/addons/DeffarProfessionProfit.md
 -- has the style guide. Plain functions and tables only: no frames, no saved data.
 --
 -- Numbers have a colour by what they count, muted and earthy rather than flashy:

@@ -1,4 +1,4 @@
--- Forever Profession Profit: the "+" button at a vendor. With a vendor window open, the
+-- Deffar Profession Profit: the "+" button at a vendor. With a vendor window open, the
 -- button buys the cooking materials the vendor sells (Soothing Spices, Hot Spices, Ice Cold Milk...) until you
 -- hold enough for the crafts the materials you ALREADY hold can make, instead of shift-clicking 20 at a time.
 --
@@ -8,7 +8,7 @@
 -- top up, not limits. Recipes limited by the same material (two recipes both using Tender Wolf Meat) count once,
 -- the larger need; recipes limited by different materials add up. What is bought is the shortfall, rounded up to
 -- the vendor's bundle size, within the stock, the gold held and the bag room (partial stacks, then free slots,
--- always leaving /fpp bags free slots, default 2). With a recipe selected in the open Cooking window the
+-- always leaving /dpp bags free slots, default 2). With a recipe selected in the open Cooking window the
 -- plan is for that recipe alone.
 --
 -- Buying follows the pattern of the installed ExtendedVendorForever (Restock.lua:216-310): one BuyMerchantItem
@@ -387,7 +387,7 @@ local function Tip(button)
 end
 
 -- Creates the button on the merchant window the first time it is needed. The merchant frame's name is the
--- usual one (MerchantFrame); if it does not exist there is no button and /fpp status says so.
+-- usual one (MerchantFrame); if it does not exist there is no button and /dpp status says so.
 function V.EnsureButton()
     if V.button then return V.button end
     local parent = _G.MerchantFrame

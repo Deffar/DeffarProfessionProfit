@@ -1,4 +1,4 @@
--- Forever Profession Profit: clicking a recipe row opens the Cooking window and selects that recipe
+-- Deffar Profession Profit: clicking a recipe row opens the Cooking window and selects that recipe
 --. Modelled on ProfPlanner's Pick.lua, which found on Forever (its notes,
 -- Nov 10) that C_TradeSkillUI.OpenRecipe alone is only applied at the window's next list refresh, so a
 -- refresh is forced with the window's own search text (nothing changes for the player), and that

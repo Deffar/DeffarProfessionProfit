@@ -1,4 +1,4 @@
--- Forever Profession Profit: what the cooking materials really cost at the auction house. When the game reports a
+-- Deffar Profession Profit: what the cooking materials really cost at the auction house. When the game reports a
 -- commodity purchase (AUCTION_HOUSE_SHOW_COMMODITY_WON_NOTIFICATION, with the item and the quantity: the
 -- same moment it prints "You won an auction for Buzzard Wing (x100)") the gold that just left the
 -- character's purse is charged to that item, so the luck window's Spent figure can use what was really paid
@@ -277,7 +277,7 @@ end
 ---------------------------------------------------------------------------
 
 B.bids = {}          -- [auctionID] = { id, amount }: bids placed, until the purchase is reported
-B.gearSeen, B.gearRecorded = 0, 0   -- for /fpp status
+B.gearSeen, B.gearRecorded = 0, 0   -- for /dpp status
 
 function B.OnBid(auctionID, amount)
     if not (F.Integer(auctionID, 1, MAX) and F.Number(amount) and amount > 0) then return end
@@ -310,7 +310,7 @@ function B.HookBids()
     return true
 end
 
--- /fpp paid [item link] 40s x3: adds purchases made before they were tracked (price of one, how many).
+-- /dpp paid [item link] 40s x3: adds purchases made before they were tracked (price of one, how many).
 function B.Paid(link, copper, count)
     local id = F.String(link) and tonumber(link:match("|Hitem:(%d+)")) or nil
     if not (F.Integer(id, 1, MAX) and F.Number(copper) and copper > 0 and F.Integer(count, 1, 100000)) then return nil end

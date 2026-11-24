@@ -1,16 +1,16 @@
--- Forever Profession Profit: the [A] button on a row makes an Auctionator shopping list of the recipe's
+-- Deffar Profession Profit: the [A] button on a row makes an Auctionator shopping list of the recipe's
 -- materials. Auctionator calls: CreateShoppingList(caller, name,
 -- searchStrings), which replaces a list of the same name and, at the auction house, starts searching, and
 -- ConvertToSearchString(caller, { searchString, isExact, quantity, maxPrice }) (Auctionator\Source\API\v1\
 -- ShoppingLists.lua, FOR-0178; maxPrice is in copper, the string holds gold: Search\Advanced.lua).
 --
 -- Each auction material gets a maximum price and a quantity:
---   * the highest price per unit that still gives at least the chosen odds (/fpp odds, default 90%) of
---     finishing at or above break-even over the crafts being bought (/fpp buy N, default: as many as the
+--   * the highest price per unit that still gives at least the chosen odds (/dpp odds, default 90%) of
+--     finishing at or above break-even over the crafts being bought (/dpp buy N, default: as many as the
 --     budget allows, see F.ShoppingSettings), every
 --     auction material allowed the same multiple of today's price so buying them all at their caps together
 --     still meets the odds;
---   * and no higher than the price that still leaves the minimum margin on cost (/fpp margin, default 10%);
+--   * and no higher than the price that still leaves the minimum margin on cost (/dpp margin, default 10%);
 --   * the number of crafts is cut until buying that many materials at their caps fits the budget (the
 --     Budget box, or all the character's gold when it is empty);
 --   * quantity per material = quantity one craft needs x those crafts minus what the character holds.
@@ -79,7 +79,7 @@ function F.ShoppingSettings()
         budget = db.budget * 10000
         if gold and gold < budget then budget = gold end   -- never more than is held
     end
-    -- How many crafts the list is for: the /fpp buy number when set; otherwise as many as the budget allows
+    -- How many crafts the list is for: the /dpp buy number when set; otherwise as many as the budget allows
     -- (the plan cuts this down to what the budget buys within the price limits); when neither a budget nor
     -- the purse can be read, the tooltip's crafts setting, so an unreadable purse never asks for 100000.
     local fill = false
@@ -111,7 +111,7 @@ end
 ---------------------------------------------------------------------------
 -- Opening and searching the new list. The buying stays with the player: the game requires a real click to spend gold
 -- at the auction house, and this addon never confirms a purchase. What it does after creating a list, at the
--- auction house and when /fpp autosearch is on:
+-- auction house and when /dpp autosearch is on:
 --   1. shows Auctionator's Shopping tab BEFORE creating the list: Auctionator's Shopping frame only listens for a
 --      new list (ListImportFinished, which then selects and expands it) while it is showing
 --      (Source\Tabs\Shopping\Mixins\Main.lua:255-257, 290-292). The tab's id is "AuctionatorTabs_Shopping"
@@ -162,7 +162,7 @@ function F.SearchShoppingList(name)
         and F.Has(bus, "RegisterSource") and F.Has(bus, "Fire") and F.Has(bus, "UnregisterSource")) then return false end
     local list = manager:GetByName(name)
     if not list then return false end
-    bus:RegisterSource(busSource, "ForeverProfessionProfit")
+    bus:RegisterSource(busSource, "DeffarProfessionProfit")
     bus:Fire(busSource, events.ListSearchRequested, list)
     bus:UnregisterSource(busSource)
     return true
@@ -221,7 +221,7 @@ end
 
 -- COMMODITY_SEARCH_RESULTS_UPDATED(itemID): says in chat how many units are at or under the limit of an item
 -- the last [A] list asked for, and lowers Auctionator's quantity box to that many (never raises it, and
--- never past what is still to buy after what you already got; /fpp autoqty off leaves the box alone).
+-- never past what is still to buy after what you already got; /dpp autoqty off leaves the box alone).
 -- Repeats are skipped unless the answer changed, so a quantity you type yourself is not fought.
 local function EvaluateDepth(itemID)
     local active = F.Integer(itemID, 1, 2147483647) and F.activeCaps[itemID] or nil
@@ -325,7 +325,7 @@ function F.SendShoppingList(row)
     local ctx = F.PlanShopping(row)
     local plan = ctx.plan
     if ctx.why == "margin" then
-        F.Print(string.format("no list made for %s: no price for its auction materials gives %d%% odds of finishing ahead%s with a %d%% margin (the food earns too little). Lower the odds with /fpp odds or the margin with /fpp margin.",
+        F.Print(string.format("no list made for %s: no price for its auction materials gives %d%% odds of finishing ahead%s with a %d%% margin (the food earns too little). Lower the odds with /dpp odds or the margin with /dpp margin.",
             row.name, ctx.odds, ctx.fill and "" or (" over " .. ctx.crafts .. " crafts"), ctx.margin))
         return 0
     elseif ctx.why == "budget" then
@@ -370,7 +370,7 @@ function F.SendShoppingList(row)
             -- Max (fill the budget) only gets here when the budget itself is spent.
             local fixed = F.Integer(F.db.buyCrafts, 1, 100000) and F.db.buyCrafts or nil
             F.Print("nothing to buy: you already hold enough for " .. crafts .. " crafts of " .. row.name
-                .. (fixed and (". \"Buy for\" is set to " .. fixed .. " crafts: tick Max in the window (or /fpp buy max) to keep buying within your limits.")
+                .. (fixed and (". \"Buy for\" is set to " .. fixed .. " crafts: tick Max in the window (or /dpp buy max) to keep buying within your limits.")
                     or (ctx.fill and " (the most your budget buys within the price limits)." or ".")))
         end
         return 0
@@ -383,7 +383,7 @@ function F.SendShoppingList(row)
         local atAuctionHouse = type(window) == "table" and F.Has(window, "IsShown") and window:IsShown()
         if not F.ShowShoppingTab() and atAuctionHouse and not F.tabWarned then
             F.tabWarned = true   -- said once per session, so a missing piece is never a silent failure
-            F.Print("could not switch Auctionator to its Shopping tab, so open it and pick the list yourself ('/fpp autosearch off' stops this note).")
+            F.Print("could not switch Auctionator to its Shopping tab, so open it and pick the list yourself ('/dpp autosearch off' stops this note).")
         end
     end
     F.ClearOldLists(listName)

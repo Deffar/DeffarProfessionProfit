@@ -1,4 +1,4 @@
--- Forever Profession Profit: data. Accessible-value guards, price lookups, the saved vendor-price and recipe
+-- Deffar Profession Profit: data. Accessible-value guards, price lookups, the saved vendor-price and recipe
 -- caches, the Master Chef rank read, and the list of rows the window shows. No frames (UI.lua) and
 -- no event registration (Core.lua). The arithmetic is in Calc.lua.
 local addonName, F = ...
@@ -46,7 +46,7 @@ function F.Integer(value, minimum, maximum)
 end
 
 function F.Print(message)
-    print("|cffffd100Forever Profession Profit|r " .. message)
+    print("|cffffd100Deffar Profession Profit|r " .. message)
 end
 
 -- Spam guard: true when `key` has not been
@@ -654,7 +654,7 @@ function F.DurationText(seconds)
     return table.concat(parts, " ")
 end
 
-F.crafts = { seen = 0 }   -- for /fpp status
+F.crafts = { seen = 0 }   -- for /dpp status
 
 -- C_TradeSkillUI.CraftRecipe(recipeID, numCasts): prints the total time when more than one cast was asked for. "~" when the cast
 -- time is only the 3 s assumed for a recipe nothing is known about.

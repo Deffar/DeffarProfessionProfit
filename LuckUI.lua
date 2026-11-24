@@ -1,4 +1,4 @@
--- Forever Profession Profit: the luck window (/fpp luck). One row per cooked item (icon and name, like the
+-- Deffar Profession Profit: the luck window (/dpp luck). One row per cooked item (icon and name, like the
 -- Delete Junk and Loot Value lists) with its crafts, extra results, expected extras, the real extra-result
 -- percentage and luck in standard deviations, and the money outcome: materials spent and the vendor value
 -- of what was made, for this session, this character or the whole account. A total row sums them and the
@@ -718,7 +718,7 @@ function U.Refresh()
         if total.partial then lines[#lines + 1] = "* listed before this was watched: its deposit is not counted." end
         if (data.hidden or 0) > 0 then lines[#lines + 1] = data.hidden .. " other item(s) you sold are not shown: untick Crafted to see them." end
         local hooks = #F.Sales.Hooked()
-        if hooks < 5 then lines[#lines + 1] = "Only " .. hooks .. " of 5 auction and mail hooks are in place yet: open the auction house and the mailbox (/fpp status)." end
+        if hooks < 5 then lines[#lines + 1] = "Only " .. hooks .. " of 5 auction and mail hooks are in place yet: open the auction house and the mailbox (/dpp status)." end
     elseif def.disenchant then
         if total.c == 0 then
             lines[#lines + 1] = "Nothing counted yet."
@@ -990,7 +990,7 @@ local function EditBox(parent, width, numeric)
 end
 
 local function Build()
-    frame = CreateFrame("Frame", "ForeverProfessionProfitLuckFrame", UIParent)
+    frame = CreateFrame("Frame", "DeffarProfessionProfitLuckFrame", UIParent)
     frame:SetSize(WIDTH, 360)
     frame:SetFrameStrata("DIALOG")
     frame:SetToplevel(true)
@@ -999,7 +999,7 @@ local function Build()
     frame:EnableMouse(true)
     frame:Hide()
     W.Box(frame, { 0, 0, 0, 0.92 }, { 0.20, 0.20, 0.20 })
-    if type(UISpecialFrames) == "table" then UISpecialFrames[#UISpecialFrames + 1] = "ForeverProfessionProfitLuckFrame" end
+    if type(UISpecialFrames) == "table" then UISpecialFrames[#UISpecialFrames + 1] = "DeffarProfessionProfitLuckFrame" end
 
     local handle = CreateFrame("Frame", nil, frame)
     handle:SetPoint("TOPLEFT", 34, 0)   --
@@ -1300,7 +1300,7 @@ local function EditPreview()
 end
 
 local function BuildEdit()
-    local e = CreateFrame("Frame", "ForeverProfessionProfitLuckEdit", frame)
+    local e = CreateFrame("Frame", "DeffarProfessionProfitLuckEdit", frame)
     editFrame = e
     e:SetSize(340, 196)
     e:SetFrameStrata("DIALOG")
@@ -1359,7 +1359,7 @@ local function BuildEdit()
     e.cancel:SetScript("OnClick", function() e:Hide() end)
     e.qty:SetScript("OnEscapePressed", function() e:Hide() end)
     e.moneyBox:SetScript("OnEscapePressed", function() e:Hide() end)
-    if type(UISpecialFrames) == "table" then UISpecialFrames[#UISpecialFrames + 1] = "ForeverProfessionProfitLuckEdit" end
+    if type(UISpecialFrames) == "table" then UISpecialFrames[#UISpecialFrames + 1] = "DeffarProfessionProfitLuckEdit" end
     e:SetPoint("CENTER", frame, "CENTER", 0, 20)
 end
 
@@ -1386,7 +1386,7 @@ function U.Frame() return frame end
 
 -- Opened from the main window's Luck button: beside that window with the top edges level, so
 -- the two do not overlap, on its left instead when there is no room on the right. Not saved: dragging the window still
--- saves its own position, which /fpp luck uses. Plain screen coordinates, so the top left stays the fixed point (see Place).
+-- saves its own position, which /dpp luck uses. Plain screen coordinates, so the top left stays the fixed point (see Place).
 function U.PlaceBeside(main)
     if not (frame and main) then return end
     local left, right, top = main:GetLeft(), main:GetRight(), main:GetTop()

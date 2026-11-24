@@ -1,0 +1,23 @@
+## Interface: 16001
+## Title: Forever Profession Profit
+## Notes: Shows which of your Cooking, Engineering and Tailoring recipes make a profit (vendor or auction house prices from Auctionator), ranks Enchanting disenchants, counts your crafting luck and what your auctions really bring in, and adds + buttons to buy materials at a vendor or Create All on the best craft (/fpp).
+## Author: Deffar
+## Category: Deffar
+## Version: 0.39.0
+## OptionalDeps: Auctionator
+## SavedVariables: ForeverProfessionProfitDB
+
+Calc.lua
+Data.lua
+Style.lua
+Pick.lua
+Shopping.lua
+Disenchant.lua
+UI.lua
+Bought.lua
+Sales.lua
+Luck.lua
+LuckUI.lua
+Vendor.lua
+Craft.lua
+Core.lua

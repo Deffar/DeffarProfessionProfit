@@ -19,4 +19,4 @@ A World of Warcraft: Forever addon.
 - `/dpp` opens the window. `/dpp status` shows what was read and saved.
 
 ## Install
-Copy the `DeffarProfessionProfit` folder into `World of Warcraft\_forever_\Interface\AddOns\`.
+Download `DeffarProfessionProfit.zip` from the [latest release](https://github.com/Deffar/DeffarProfessionProfit/releases/latest) and extract it into `World of Warcraft\_forever_\Interface\AddOns\`, so that the folder `AddOns\DeffarProfessionProfit` contains the `.toc` file. (GitHub's green "Code > Download ZIP" button gives a folder named `...-main` with the files directly inside; use the release zip instead.)

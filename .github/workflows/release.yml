@@ -1,0 +1,29 @@
+name: Release zip
+
+# When a version tag such as v0.39.0 is pushed, build DeffarProfessionProfit.zip (the addon folder named
+# DeffarProfessionProfit, without "-main") and attach it to a GitHub release.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the addon zip
+        run: |
+          mkdir DeffarProfessionProfit
+          cp ./*.lua ./*.toc DeffarProfessionProfit/
+          zip -r DeffarProfessionProfit.zip DeffarProfessionProfit
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: DeffarProfessionProfit.zip
+          generate_release_notes: true

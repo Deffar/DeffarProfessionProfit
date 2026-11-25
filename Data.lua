@@ -2,7 +2,7 @@
 -- caches, the Master Chef rank read, and the list of rows the window shows. No frames (UI.lua) and
 -- no event registration (Core.lua). The arithmetic is in Calc.lua.
 local addonName, F = ...
-F.VERSION = "0.43.11"
+F.VERSION = "0.43.12"
 F.CALLER = addonName   -- Auctionator wants the calling addon's name as its first argument
 F.eventIssues = {}
 
@@ -46,7 +46,7 @@ function F.Integer(value, minimum, maximum)
 end
 
 function F.Print(message)
-    print("|cffffd100Deffar Profession Profit|r " .. message)
+    print("|cffffd100DPP|r " .. message)
 end
 
 -- Spam guard: true when `key` has not been
@@ -132,11 +132,11 @@ F.LUCK_TABS = { "cooking", "engineering", "tailoring", "enchanting", "auction" }
 F.TAB_ORDER = { "cooking", "engineering", "tailoring", "enchanting" }   -- the main window's tabs: Enchanting is a buy list of auction-house gear (Disenchant.lua)
 F.PROFESSIONS = {
     cooking = { key = "cooking", name = "Cooking", store = "recipes", proc = true, line = 185 },
-    engineering = { key = "engineering", name = "Engineering", store = "engineering", proc = false, line = 202 },
+    engineering = { key = "engineering", name = "Engineering", store = "engineering", proc = false, line = 202, gear = true },
     -- Tailoring works like Engineering: the learned recipes whose result a vendor buys, no rank and no extra
     -- result. 197 is the classic Tailoring skill line, the same family as Cooking 185 and Engineering 202: a HYPOTHESIS until the
     -- window reports it (FOR-0196); the open window is also recognised by its profession name.
-    tailoring = { key = "tailoring", name = "Tailoring", store = "tailoring", proc = false, line = 197 },
+    tailoring = { key = "tailoring", name = "Tailoring", store = "tailoring", proc = false, line = 197, gear = true },
     -- no recipes and no store: its rows are items from Auctionator's last scan. 333 is the classic Enchanting skill line,
     -- the same family as the verified Cooking 185 and Lockpicking 633 (FOR-0177, FOR-0151); not read on Forever yet.
     enchanting = { key = "enchanting", name = "Enchanting", proc = false, line = 333, disenchant = true },
@@ -327,11 +327,18 @@ end
 -- The auction house keeps 5% of a sale; the profit figures use the price after it.
 F.AH_CUT = 0.05
 
+-- "Disenchant" mode: on while the box is ticked AND the tab makes gear (`gear` in F.PROFESSIONS). Cooking makes food, which cannot be
+-- disenchanted, so the box is not there and a ticked box means nothing on that tab.
+local buildingTab   -- the tab F.BuildRows is working on (it can differ from the one shown: the "+" button builds its own profession's rows)
+function F.SellDE()
+    return F.db ~= nil and F.db.sellDE == true and (F.PROFESSIONS[buildingTab or F.Tab()] or {}).gear == true
+end
+
 -- What one item brings in when sold: the vendor price, or in "Sell at AH" mode the Auctionator price less the
 -- auction house's cut. 0 means it cannot be sold that way (no vendor price / no Auctionator price); nil: the item is
 -- not loaded yet (vendor mode only).
 function F.SellPrice(id)
-    if F.db and F.db.sellDE == true then
+    if F.SellDE() then
         return F.Disenchant.ValueOf(id)   -- the average of what it disenchants into (Disenchant.lua): nil while its data loads, 0 if it cannot be
     end
     if F.db and F.db.sellAH == true then
@@ -813,7 +820,7 @@ end
 -- Calc.Evaluate result at the current rank (a profession without an extra-result chance is always rank 0, source
 -- "none"). Returns rows, info where info = { prof, proc, rank, source, seen, count, missing (rows with an
 -- unknown material price), oldest (oldest Auctionator price age in days that a row used) }.
-function F.BuildRows(prof)
+local function BuildRowsOf(prof)
     local db = F.db
     local rows = {}
     prof = F.PROFESSIONS[prof] and prof or F.Tab()
@@ -853,7 +860,7 @@ function F.BuildRows(prof)
     local function Add(id, recipe, unknown)
         if type(recipe) == "table" and F.Integer(recipe.out, 1, 2147483647) and type(recipe.r) == "table"
             and (proc or F.ItemMeta(recipe.out).sell ~= 0 or (db.sellAH == true and F.AuctionPrice(recipe.out))
-                or (db.sellDE == true and (F.Disenchant.ValueOf(recipe.out) or 1) > 0)) then   -- (a result nobody buys is only ever a material)
+                or (F.SellDE() and (F.Disenchant.ValueOf(recipe.out) or 1) > 0)) then   -- (a result nobody buys is only ever a material)
             local item = F.ItemMeta(recipe.out)
             if unknown and not F.IsFood(item) then return end   -- (a learned recipe is only kept for food; the catalog's wait for the item data)
             local seconds, secondsFrom = F.CraftSeconds(id)
@@ -898,5 +905,15 @@ function F.BuildRows(prof)
         end
     end
     info.oldest = oldest
+    return rows, info
+end
+
+function F.BuildRows(prof)
+    prof = F.PROFESSIONS[prof] and prof or F.Tab()
+    local before = buildingTab
+    buildingTab = prof
+    local ok, rows, info = pcall(BuildRowsOf, prof)
+    buildingTab = before
+    if not ok then error(rows, 0) end
     return rows, info
 end

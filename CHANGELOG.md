@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.43.12
+- **Enchanting tab:**
+  - The "Apply filters" box is gone: Min return, Min profit, Min odds and Max age always apply, and items that lose money are never listed.
+  - New **Quality** and **Level** dropdowns. Level lists the item level ranges of the disenchant table; with a quality picked each range shows the icons of what it disenchants into (hover to name them).
+  - A price last seen more than a day ago, or with no age on record, is never used. Items gone from the auction house no longer come back after a reload. Max age is now 0 or 1.
+  - Random-suffix items show their suffix again ("... of the Bear") instead of a number.
+  - The full scan time is kept for all characters and keeps counting down while you are logged out.
+- **Cooking:** the Rank button is at the right end of the checkbox row, and the "Master Chef ..." line is gone: the button's tooltip says it. "Known recipes" moved to the Budget row.
+- The Disenchant checkbox is only on tabs that make gear (Tailoring, Engineering), not Cooking.
+- The empty space under the tabs is closed on every tab.
+- Chat messages from the addon start with `DPP`.
+
 ## 0.43.11
 - Hovering an unlearned recipe now shows everything in the tooltip: `(175) not learned.` (the skill green when yours reaches it, red when not), `Source: Kendor Kabonka (Vendor)` for your faction (or `HORDE ONLY` / `ALLIANCE ONLY` in red), and `Binds on Pickup` / `Binds on Equip`.
 - A plain click on an unlearned recipe no longer prints in chat. Ctrl-click still pins the vendor on the map.

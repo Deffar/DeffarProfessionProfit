@@ -813,6 +813,8 @@ function U.Refresh()
         frame.pageText:SetText("Page " .. page .. "/" .. pages .. "   " .. #data.items .. ((def.sales or def.disenchant) and " item(s)" or " recipe(s)"))
     end
     frame:SetHeight(tall)
+    -- the main window is as tall as this one: when this one needs more than the main window last measured, the main window is laid out again
+    if F.UI and F.UI.IsShown() and F.UI.Frame() and F.UI.Frame():GetHeight() ~= tall then F.UI.Refresh() end
 
     -- A tooltip open on a row is rebuilt with the new counts (a craft was just counted) instead of being closed
     -- or left stale by the redraw; the row under the mouse may now hold another item after a re-sort. One whose

@@ -149,8 +149,35 @@ function D.ItemsArrived()
     if cache and cache.info.loading > 0 and cache.loads < MAX_LOAD_REBUILDS then dirty = true end
 end
 
+-- Auctionator keeps a price until a newer one replaces it, so an item sold or expired long ago stays in its database with its old
+-- price (human report 2026-11-25: items last seen 11 days before came back after every reload). A price last seen more than
+-- MAX_AGE scan days ago, or with no day on record (the age cannot be told), is never used. The age is Auctionator's own GetPriceAge:
+-- whole scan days, so 1 is "seen yesterday or today".
+D.MAX_AGE = 1
+function D.MaxAge()   -- the Max age setting, never above the day a price is trusted for
+    return math.min(F.Integer(F.db and F.db.maxAge, 0, 99) and F.db.maxAge or 1, D.MAX_AGE)
+end
+
+function D.TooOld(database, key)
+    if not F.Has(database, "GetPriceAge") then return false end   -- (no way to tell: the list says so, FOR-0191)
+    local age = database:GetPriceAge(key)
+    return not F.Number(age) or age > D.MAX_AGE
+end
+
 function D.Pending()
     return dirty or stale
+end
+
+-- The text of a random-suffix key's last part. Auctionator's Forever price database keeps a NUMBER there, an index into
+-- `Auctionator.Utilities.SuffixLabels` ("of the Bear"; Data_Forever\Suffixes.lua, and Source\Variables\Main.lua converts the old
+-- text keys to the index). Read from the installed addon, not run. An older database that still keeps the text, or a missing list,
+-- gives the part unchanged.
+function D.SuffixLabel(suffix)
+    local index = tonumber(suffix)
+    local utilities = _G.Auctionator and _G.Auctionator.Utilities
+    local labels = type(utilities) == "table" and utilities.SuffixLabels or nil
+    if index and type(labels) == "table" and type(labels[index]) == "string" then return labels[index] end
+    return suffix
 end
 
 local function Candidates(database)
@@ -219,19 +246,52 @@ end
 
 -- Returns rows, info in the shape F.BuildRows gives for a recipe tab: each row has `ev` (the fields the columns read:
 -- cost = the item's price, value = the disenchant value after the cut) and `de` (the figures behind it).
--- When Auctionator last STARTED a full scan of the auction house (seconds since 1970), nil when it does not say. It keeps one
--- stamp per kind of auction-house client (TimeOfLastReplicateScan, TimeOfLastGetAllScan: Source_ModernAH / Source_LegacyAH
--- FullScan\Mixins\Frame.lua) and sets it when the scan begins, not when it ends; the newer of the two is the scan that was done
---.
+-- When a full scan of the auction house last STARTED (seconds since 1970), nil when nothing says. Two sources, the newer wins:
+--  * Auctionator's own stamp in its account-wide saved variables (Auctionator.SavedState = AUCTIONATOR_SAVEDVARS, so every character
+--    reads the same one): TimeOfLastReplicateScan / TimeOfLastGetAllScan (Source_ModernAH / Source_LegacyAH FullScan\Mixins\Frame.lua)
+--    and TimeOfLastBrowseScan (IncrementalScan\Mixins\Frame.lua), set when the scan begins, not when it ends;
+--  * this addon's own record, F.db.lastScan (DeffarProfessionProfitDB is account-wide too), written when Auctionator's scan-start
+--    events are heard (D.ListenScans) and whenever the stamp above is newer. It is a clock time, so it keeps counting while no
+--    character is logged in, and a scan made on one character is the same scan on every other (human report 2026-11-25: "Full scan
+--    ready" an instant after a scan).
 local function LastScan()
     local auctionator = _G.Auctionator
     local state = type(auctionator) == "table" and auctionator.SavedState or nil
-    if type(state) ~= "table" then return nil end
-    local newest
-    for _, at in ipairs({ state.TimeOfLastReplicateScan or 0, state.TimeOfLastGetAllScan or 0 }) do
-        if F.Number(at) and at > 0 and (not newest or at > newest) then newest = at end
+    local newest = F.db and F.Number(F.db.lastScan) and F.db.lastScan > 0 and F.db.lastScan or nil
+    if type(state) == "table" then
+        for _, at in ipairs({ state.TimeOfLastReplicateScan or 0, state.TimeOfLastGetAllScan or 0, state.TimeOfLastBrowseScan or 0 }) do
+            if F.Number(at) and at > 0 and (not newest or at > newest) then newest = at end
+        end
     end
+    if newest and F.db and F.db.lastScan ~= newest then F.db.lastScan = newest end
     return newest
+end
+D.LastScan = LastScan
+
+-- Listens for the start of Auctionator's scans (the full scan and the incremental one) so the time is kept even when its own stamp
+-- is not written. The event names are read from its tables, nothing is guessed; the tables are Auctionator.FullScan.Events and
+-- Auctionator.IncrementalScan.Events (read from the installed addon, FOR-0191).
+local scanListener = {}
+function scanListener:ReceiveEvent()
+    if F.db then F.db.lastScan = F.Now() end
+    if F.UI and F.UI.IsShown() then F.UI.UpdateScanText() end
+end
+D.scanListener = scanListener   -- (tests)
+local listeningScans = false
+function D.ListenScans()
+    if listeningScans then return true end
+    local auctionator = _G.Auctionator
+    local bus = type(auctionator) == "table" and auctionator.EventBus or nil
+    if not (type(bus) == "table" and F.Has(bus, "Register")) then return false end
+    local names = {}
+    for _, group in ipairs({ "FullScan", "IncrementalScan" }) do
+        local events = type(auctionator[group]) == "table" and auctionator[group].Events or nil
+        if type(events) == "table" and F.String(events.ScanStart) then names[#names + 1] = events.ScanStart end
+    end
+    if #names == 0 then return false end
+    bus:Register(scanListener, names)
+    listeningScans = true
+    return true
 end
 
 -- Seconds until Auctionator lets another full scan start: it needs 15 minutes since the last one began (modern client:
@@ -264,6 +324,8 @@ local function Build()
             stats.gone = (stats.gone or 0) + 1
         elseif not (F.Number(price) and price > 0) then
             stats.noPrice = stats.noPrice + 1
+        elseif D.TooOld(database, c.key) then
+            stats.stale = (stats.stale or 0) + 1   -- (seen more than a day ago, or no day on record: never trusted)
         else
             local meta = F.ItemMeta(c.id)
             if meta.quality == nil or meta.class == nil or not meta.name then
@@ -289,7 +351,7 @@ local function Build()
                     local net = math.floor(gross * (1 - F.AH_CUT))
                     local profit = net - price
                     if profit > 0 then stats.positive = stats.positive + 1 end
-                    local name = c.suffix and (meta.name .. " " .. c.suffix) or meta.name
+                    local name = c.suffix and (meta.name .. " " .. D.SuffixLabel(c.suffix)) or meta.name
                     local age = F.Has(database, "GetPriceAge") and database:GetPriceAge(c.key) or nil   -- days since the price was last seen
                     rows[#rows + 1] = { id = c.key, itemID = c.id, name = name, item = meta, via = {},
                         vendorValue = (meta.sell and meta.sell > 0) and meta.sell or nil,
@@ -349,8 +411,8 @@ function D.Report()
     D.Invalidate()   -- a fresh build, so the counts are today's
     local rows, info = D.Rows()
     local s = info.stats
-    lines[#lines + 1] = string.format("price database: %d gear keys; %d without a price, %d not uncommon-or-better gear, %d with no disenchant value (dust prices unknown?), %d still loading.",
-        s.candidates, s.noPrice, s.notDisenchantable, s.noValue, info.loading)
+    lines[#lines + 1] = string.format("price database: %d gear keys; %d without a price, %d not uncommon-or-better gear, %d with no disenchant value (dust prices unknown?), %d still loading; %d left out because their price is more than %d day(s) old.",
+        s.candidates, s.noPrice, s.notDisenchantable, s.noValue, info.loading, s.stale or 0, D.MAX_AGE)
     lines[#lines + 1] = string.format("listed %d, of which %d with a profit above 0 (value after the %d%% cut minus the AH price).",
         s.listed, s.positive, math.floor(F.AH_CUT * 100 + 0.5))
     local function Show(title, list)
@@ -418,6 +480,7 @@ local function UpdateRows(rows, byKey)
 end
 
 function D.Rows()
+    D.ListenScans()   -- (Auctionator may have loaded since the last try)
     if cache and not (dirty and Clock() - builtAt >= 2) then
         if stale and Clock() - updatedAt >= 2 then
             UpdateRows(cache.rows, cache.byKey)

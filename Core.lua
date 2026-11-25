@@ -293,7 +293,7 @@ driver:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4)
         end
         return
     end
-    if event == "AUCTION_HOUSE_SHOW" then F.Bought.Snapshot(); F.HookAuctionator(); F.Bought.HookBids(); F.Sales.Hook(); return end
+    if event == "AUCTION_HOUSE_SHOW" then F.Bought.Snapshot(); F.HookAuctionator(); F.Bought.HookBids(); F.Sales.Hook(); F.Disenchant.ListenScans(); return end
     -- the AH sales tab (Sales.lua): a post going through or failing, and the mailbox
     if event == "AUCTION_HOUSE_AUCTION_CREATED" then F.Sales.OnCreated(arg1); return end
     if event == "AUCTION_MULTISELL_FAILURE" then F.Sales.OnFailed(event); return end
@@ -436,7 +436,7 @@ local function Help()
     print("  /dpp luck - the luck counter: extra results seen against the Master Chef chance (/dpp luck reset clears this session)")
     print("  /dpp status - what was read and saved")
     print("  /dpp minimap on|off - show or hide the minimap button (drag it to move it)")
-    print("  /dpp crafttime on|off - print how long a Create All takes (Deffar Profession Profit Craft time: 15m)")
+    print("  /dpp crafttime on|off - print how long a Create All takes (DPP Craft time: 15m)")
     print("  /dpp sales - the luck window's AH sales tab: what your auctions really brought in, deposits included")
     print("  /dpp de - what the Enchanting tab found in Auctionator's data")
     print("Open your Cooking (and Engineering, Tailoring) window once so the recipes are saved, and visit vendors so their prices are saved.")
@@ -597,7 +597,7 @@ SlashCmdList.DEFFARPROFESSIONPROFIT = function(message)
         F.Print("the minimap button is now " .. (on and "shown." or "hidden.") .. (on and not F.Minimap.button and " (this client has no minimap to put it on.)" or ""))
     elseif command == "crafttime" then
         F.db.craftTime = (argument == "on") or (argument ~= "off" and not F.db.craftTime)
-        F.Print("the time of Create All is now " .. (F.db.craftTime and "printed to the chat (Deffar Profession Profit Craft time: 15m)." or "not printed."))
+        F.Print("the time of Create All is now " .. (F.db.craftTime and "printed to the chat (DPP Craft time: 15m)." or "not printed."))
     elseif command == "status" then
         Status()
     else

@@ -20,11 +20,17 @@ local COUNT_MIN = 9                            -- the count column: about a char
 local HANDLE_H = 30                          -- the title bar: the drag handle covers it
 local TAB_Y, TAB_H, TAB_W = HANDLE_H, 24, 92
 local TAB_SHIFT = TAB_H + 1
-local BUDGET_Y = 86 + TAB_SHIFT              -- the Budget / Odds row (inputs for the [A] button), from the window's top edge
-local BUY_Y = 110 + TAB_SHIFT                -- the Buy for / Max row, from the window's top edge
-local HEAD_Y = 136 + TAB_SHIFT               -- the column headings
-local ROWS_Y = 154 + TAB_SHIFT               -- first row
+-- The checkbox row (Cooking's Rank button is at its right end) is empty on the Enchanting tab, which has no such boxes: there everything
+-- below it moves up by LIFT (SetLift, which also moves the widgets placed at creation).
+local LIFT = 24
+local CHECK_Y = 38 + TAB_SHIFT               -- the checkbox row, from the window's top edge
+local BUDGET0, BUY0, HEAD0, ROWS0 = 62 + TAB_SHIFT, 86 + TAB_SHIFT, 112 + TAB_SHIFT, 130 + TAB_SHIFT
+local BUDGET_Y = BUDGET0                     -- the Budget / Odds row (inputs for the [A] button), from the window's top edge
+local BUY_Y = BUY0                           -- the Buy for / Max row, from the window's top edge
+local HEAD_Y = HEAD0                         -- the column headings
+local ROWS_Y = ROWS0                         -- first row
 local FOOT_Y = ROWS_Y + PAGE * (ROW_H + ROW_GAP) + 4
+local lift = 0                               -- how far the body is lifted now (0 or LIFT)
 
 local GOLD, TEXT, GREY = {1, 0.82, 0}, {0.90, 0.90, 0.92}, {0.70, 0.70, 0.73}
 local GREEN, RED, ORANGE = {0.35, 0.90, 0.35}, {1, 0.40, 0.40}, {1, 0.65, 0.20}
@@ -295,7 +301,7 @@ local function ColHead(col)
         if col.key == "vendor" then return "AH net" end
         if col.key == "ah" then return "Vendor" end
     end
-    if F.db and F.db.sellDE == true then
+    if F.SellDE() then
         if col.key == "vendor" then return "DE net" end
         if col.key == "ah" then return "Vendor" end
     end
@@ -303,7 +309,7 @@ local function ColHead(col)
 end
 
 local function SellAH() return F.db ~= nil and F.db.sellAH == true end
-local function SellDE() return F.db ~= nil and F.db.sellDE == true end
+local function SellDE() return F.SellDE() end
 
 local function SortKey(row, key)
     local ev = row.ev
@@ -530,7 +536,6 @@ local function Layout(widths)
             end
         end
     end
-    frame.rankText:SetWidth(width - 2 * SIDE - 120)
     frame.note:SetWidth(width - 2 * (SIDE + 4))
     frame.empty:SetWidth(width - 60)
     frame.detail:SetWidth(width - 2 * SIDE)
@@ -1077,7 +1082,7 @@ end
 
 local function RankLine(info)
     if not info.proc then
-        return "No extra-result chance.", GREY
+        return "", GREY   -- (only Cooking has an extra-result chance to name)
     end
     local chance = info.rank * F.Calc.PER_RANK
     local head = string.format("Master Chef %d/%d: %d%% extra result", info.rank, F.RANK_MAX, chance)
@@ -1114,7 +1119,7 @@ local function NoteText(info)
     end
     if info.missing > 0 then notes[#notes + 1] = info.missing .. " recipe(s) lack a price." end
     if info.loading > 0 then notes[#notes + 1] = info.loading .. (info.disenchant and " item(s) loading." or " price(s) loading.") end
-    local why = info.disenchant and F.db.marginOnly and state.why or nil
+    local why = info.disenchant and state.why or nil
     if why and (why.loss + why.ret + why.profit + why.odds + (why.old or 0)) > 0 then
         local parts = {}
         if why.loss > 0 then parts[#parts + 1] = why.loss .. " lose money" end
@@ -1141,6 +1146,99 @@ function U.UpdateScanText()
     end
 end
 
+-- Moves the body of the window (everything under the rank band) up by `target`, or back down. The positions that are worked out on every
+-- redraw (rows, headings, footer) read the heights above; the widgets anchored once at creation are moved here, by reading their
+-- anchors, so no creation site has to know about the lift.
+local function SetLift(target)
+    if target == lift or not frame then return end
+    local d = target - lift
+    lift = target
+    BUDGET_Y, BUY_Y, HEAD_Y, ROWS_Y = BUDGET0 - lift, BUY0 - lift, HEAD0 - lift, ROWS0 - lift
+    FOOT_Y = ROWS_Y + PAGE * (ROW_H + ROW_GAP) + 4
+    state.sig = nil   -- (the list is laid out again: its headings are anchored there)
+    local top = -(TAB_Y + TAB_H + 2)   -- below the tab row
+    local function Shift(widget)
+        if type(widget.GetNumPoints) ~= "function" then return end
+        local n = widget:GetNumPoints()
+        if type(n) ~= "number" or n == 0 then return end
+        -- lifting: what sits below the tab row, marked as lifted; lowering: exactly what was marked (a lifted widget sits near the tabs,
+        -- so its place says nothing)
+        local points, move = {}, false
+        for i = 1, n do
+            local point, relative, relativePoint, x, y = widget:GetPoint(i)
+            points[i] = { point, relative, relativePoint, x, y }
+            if d > 0 and relative == frame and type(y) == "number" and y <= top and not widget.liftMark then move = true end
+        end
+        if d < 0 then move = widget.liftMark == true end
+        if not move then return end
+        widget.liftMark = d > 0 or nil
+        widget:ClearAllPoints()
+        for _, p in ipairs(points) do
+            if p[2] == frame and type(p[5]) == "number" and (d < 0 or p[5] <= top) then p[5] = p[5] + d end
+            widget:SetPoint(p[1], p[2], p[3], p[4], p[5])
+        end
+    end
+    for _, child in ipairs({ frame:GetChildren() }) do Shift(child) end
+    for _, region in ipairs({ frame:GetRegions() }) do Shift(region) end
+end
+
+-- The Enchanting tab's level dropdown. One entry per item level range of Auctionator's disenchant table (Disenchant.lua D.Bracket:
+-- { lowest item level, highest, then triples of percent, quantity, item }) that some listed item falls in; with a quality chosen,
+-- only that quality's ranges, each named by what it disenchants into (the same range gives other results at another quality).
+function U.RangeKey(bracket)
+    return string.format("%d-%d", bracket[1], bracket[2])
+end
+
+local function RangeEntries()
+    local found, list = {}, {}
+    for _, row in ipairs(state.all or {}) do
+        local bracket = row.de and row.de.bracket
+        if bracket and (not state.deQuality or (row.item and row.item.quality == state.deQuality)) then
+            local key = U.RangeKey(bracket)
+            if not found[key] then
+                found[key] = { key = key, low = bracket[1], high = bracket[2], bracket = bracket }
+                list[#list + 1] = found[key]
+            end
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.low ~= b.low then return a.low < b.low end
+        return a.high < b.high
+    end)
+    return list
+end
+
+-- What a range disenchants into: the ids of its results, once each (the dropdown shows their icons, a hover names them).
+local function RangeResults(entry)
+    local ids, seen = {}, {}
+    for x = 3, #entry.bracket, 3 do
+        local id = entry.bracket[x + 2]
+        if F.Integer(id, 1, 2147483647) and (entry.bracket[x] or 0) > 0 and not seen[id] then
+            seen[id] = true
+            ids[#ids + 1] = id
+        end
+    end
+    return ids
+end
+
+local function RangeText(entry)
+    local text = entry.key
+    if state.deQuality then   -- (one quality: the range has one set of results, shown as icons)
+        for _, id in ipairs(RangeResults(entry)) do
+            local icon = F.ItemMeta(id).icon
+            if icon then text = text .. " |T" .. tostring(icon) .. ":14|t" end
+        end
+    end
+    return text
+end
+
+local QUALITY_NAMES = { [2] = "Uncommon", [3] = "Rare", [4] = "Epic" }
+
+local function QualityText(quality)
+    if not quality then return "All qualities" end
+    return F.Style.QualityCode(quality) .. QUALITY_NAMES[quality] .. "|r"
+end
+
 function U.Refresh()
     if not frame or not frame:IsShown() then return end
     local db = F.db
@@ -1151,6 +1249,8 @@ function U.Refresh()
     local list, info = F.BuildRows(tab)
     state.proc = info.proc
     state.de = info.disenchant == true
+    SetLift(state.de and LIFT or 0)   -- (the Enchanting tab has no checkbox row)
+    state.all = state.de and list or nil   -- (every item worked out, for the level dropdown's entries)
     for key, button in pairs(frame.tabs) do
         button.selected = key == tab
         PaintTab(button)
@@ -1162,7 +1262,7 @@ function U.Refresh()
     -- filtered, sorted, measured list of the last repaint is reused instead of being built and measured again.
     local sig
     if info.disenchant then
-        sig = table.concat({ F.Disenchant.version, tostring(info.unavailable), tostring(db.sort), tostring(db.sortDesc), tostring(db.marginOnly),
+        sig = table.concat({ F.Disenchant.version, tostring(info.unavailable), tostring(db.sort), tostring(db.sortDesc), tostring(state.deQuality), tostring(state.deRange),
             tostring(db.margin), tostring(db.minProfitCopper), tostring(db.minOdds), tostring(db.maxAge), tostring(db.showAH), state.search }, "|")
     end
     local shown = {}
@@ -1183,15 +1283,19 @@ function U.Refresh()
             local enoughReturn = row.ev.margin ~= nil and row.ev.margin >= need
             local enoughProfit = row.ev.profit >= least
             local enoughOdds = row.de.odds == nil or row.de.odds >= odds   -- (an item whose odds cannot be worked out is not held to them)
-            local maxAge = F.Integer(db.maxAge, 0, 99) and db.maxAge or 1
+            local maxAge = F.Disenchant.MaxAge()   -- (a price older than a day is not in the list at all)
             local fresh = row.de.age == nil or row.de.age <= maxAge        -- Auctionator never forgets a price: how old this one is
-            keep = not db.marginOnly or (noLoss and enoughReturn and enoughProfit and enoughOdds and fresh)
-            if db.marginOnly then
-                if not noLoss then why.loss = why.loss + 1 end
-                if noLoss and not enoughReturn then why.ret = why.ret + 1 end       -- (losses are counted once, as losses)
-                if noLoss and not enoughProfit then why.profit = why.profit + 1 end
-                if noLoss and not enoughOdds then why.odds = why.odds + 1 end
-                if noLoss and not fresh then why.old = (why.old or 0) + 1 end
+            keep = noLoss and enoughReturn and enoughProfit and enoughOdds and fresh   -- (the filters always apply, as the boxes are edited)
+            if not noLoss then why.loss = why.loss + 1 end
+            if noLoss and not enoughReturn then why.ret = why.ret + 1 end       -- (losses are counted once, as losses)
+            if noLoss and not enoughProfit then why.profit = why.profit + 1 end
+            if noLoss and not enoughOdds then why.odds = why.odds + 1 end
+            if noLoss and not fresh then why.old = (why.old or 0) + 1 end
+            -- the quality and the item level range: the bracket of Auctionator's disenchant table the item falls in
+            if keep and state.deQuality and not (row.item and row.item.quality == state.deQuality) then keep = false end
+            if keep and state.deRange then
+                local bracket = row.de.bracket
+                keep = bracket ~= nil and U.RangeKey(bracket) == state.deRange
             end
         else
             keep = not db.profitOnly or (row.ev.profit and row.ev.profit > 0)
@@ -1243,20 +1347,19 @@ function U.Refresh()
     if not frame.marginBox.focused then frame.marginBox:SetText(tostring(F.Integer(db.margin, 0, 100) and db.margin or 10)) end
     if not frame.buyBox.focused then frame.buyBox:SetText(db.buyCrafts and tostring(db.buyCrafts) or "") end
     frame.maxCheck.mark:SetShown(db.buyCrafts == nil)
-    frame.profitOnly.mark:SetShown((state.de and db.marginOnly ~= false) or (not state.de and db.profitOnly == true))
-    frame.profitOnly.label:SetText(state.de and "Apply filters" or "Profitable only")
+    frame.profitOnly.mark:SetShown(not state.de and db.profitOnly == true)   -- (the Enchanting tab has no such box: its filters always apply)
     frame.ownedFree.mark:SetShown(db.ownedFree == true)
     frame.showAH.mark:SetShown(db.showAH == true)
     frame.sellAH.mark:SetShown(db.sellAH == true)
     frame.sellDE.mark:SetShown(db.sellDE == true)
     frame.known:SetShown(not state.de and F.Catalog.Has(tab))   -- (only a profession with a catalog)
     frame.known.mark:SetShown(db.showUnlearned ~= true)
-    frame.showAH.label:SetText((db.sellAH == true or db.sellDE == true) and "Vendor column" or "AH column")
+    frame.showAH.label:SetText((db.sellAH == true or F.SellDE()) and "Vendor column" or "AH column")
     -- The Enchanting tab has no recipes, materials, budget, odds or crafts to buy for, and its gear sells to a vendor for 1c: those
     -- controls are hidden there and the Margin box moves left, with a Min profit box beside it
     for _, widget in ipairs(frame.recipeOnly) do widget:SetShown(not state.de) end
     frame.budgetHint:SetShown(not state.de and db.budget == nil)
-    frame.sellDE:SetShown(not state.de and F.ProfessionKnown("enchanting"))   -- (only a character with Enchanting can disenchant)
+    frame.sellDE:SetShown(not state.de and (F.PROFESSIONS[tab] or {}).gear == true and F.ProfessionKnown("enchanting"))   -- (only a character with Enchanting can disenchant, and only gear: not Cooking's food)
     frame.minLabel:SetShown(state.de)
     frame.minBox:SetShown(state.de)
     frame.minCoin:SetShown(state.de)
@@ -1268,6 +1371,10 @@ function U.Refresh()
     frame.maxAgeLabel:SetShown(state.de)
     frame.maxAgeBox:SetShown(state.de)
     frame.maxAgeUnit:SetShown(state.de)
+    for _, widget in ipairs(frame.deOnly) do widget:SetShown(state.de) end
+    if not state.de then frame.qualityButton.popup:Hide(); frame.levelButton.popup:Hide() end
+    frame.qualityButton.label:SetText(QualityText(state.deQuality))
+    frame.levelButton.label:SetText(state.deRange and ("Level " .. state.deRange) or "All levels")
     frame.marginLabel:SetText(state.de and "Min return:" or "Margin:")
     if state.controlsDe ~= state.de then
         state.controlsDe = state.de
@@ -1280,10 +1387,9 @@ function U.Refresh()
     if not frame.minBox.focused then frame.minBox:SetText(tostring(math.floor(minProfit / 100))) end
     if not frame.minCopperBox.focused then frame.minCopperBox:SetText(tostring(minProfit % 100)) end
     if not frame.minOddsBox.focused then frame.minOddsBox:SetText(tostring(F.Integer(db.minOdds, 0, 100) and db.minOdds or 30)) end
-    if not frame.maxAgeBox.focused then frame.maxAgeBox:SetText(tostring(F.Integer(db.maxAge, 0, 99) and db.maxAge or 1)) end
+    if not frame.maxAgeBox.focused then frame.maxAgeBox:SetText(tostring(F.Disenchant.MaxAge())) end
     frame.rankButton.label:SetText(F.Integer(db.rankOverride, 0, F.RANK_MAX) and ("Rank: " .. db.rankOverride .. " (set)") or "Rank: Auto")
-    local text, color = RankLine(info)
-    SetText(frame.rankText, text, color)
+    frame.rankLine, frame.rankColor = RankLine(info)   -- (the Rank button's tooltip says it)
 
     local first = (state.page - 1) * PAGE
     for index = 1, PAGE do
@@ -1324,14 +1430,16 @@ function U.Refresh()
         elseif info.count == 0 then
             local name = F.PROFESSIONS[info.prof].name
             frame.empty:SetText("No " .. name:lower() .. " recipes saved. Open your " .. name .. " window once.")
-        elseif state.de and db.marginOnly ~= false then
+        elseif state.de and (state.deQuality ~= nil or state.deRange ~= nil) then
+            frame.empty:SetText("Nothing in this quality and level range meets the filters. Pick \"All qualities\" and \"All levels\", or loosen the filters.")
+        elseif state.de then
             local best
             for _, row in ipairs(list) do
                 if row.ev.margin and (not best or row.ev.margin > best) then best = row.ev.margin end
             end
-            frame.empty:SetText(string.format("Nothing meets Min return %d%%, Min profit %s, Min odds %d%% and Max age %dd%s. %d item(s) are listed. Untick \"Apply filters\" or loosen them.",
+            frame.empty:SetText(string.format("Nothing meets Min return %d%%, Min profit %s, Min odds %d%% and Max age %dd%s. %d item(s) are listed. Loosen the filters.",
                 F.Integer(db.margin, 0, 100) and db.margin or 10, F.Money(minProfit),
-                F.Integer(db.minOdds, 0, 100) and db.minOdds or 30, F.Integer(db.maxAge, 0, 99) and db.maxAge or 1,
+                F.Integer(db.minOdds, 0, 100) and db.minOdds or 30, F.Disenchant.MaxAge(),
                 best and string.format("; the best returns %+d%%", math.floor(best * 100 + 0.5)) or "", #list))
         elseif db.profitOnly and not state.de then
             frame.empty:SetText("No profitable recipe. Untick \"Profitable only\" to see all.")
@@ -1533,6 +1641,116 @@ local function Toggle(key)
     U.Refresh()
 end
 
+local function BuildDropdowns()
+    -- Enchanting tab: a quality dropdown and a level dropdown (on the row the recipe tabs use for Buy for). A flat button that opens a
+    -- list under it; a click outside the list closes it.
+    local function MakeDropdown(x, width, Items, Pick, tip)
+        local button = MakeButton(frame, "", width, 18)
+        button:SetPoint("TOPLEFT", frame, "TOPLEFT", x, -BUY_Y)
+        button.label:ClearAllPoints()
+        button.label:SetPoint("LEFT", button, "LEFT", 6, 0)
+        button.label:SetPoint("RIGHT", button, "RIGHT", -14, 0)
+        button.label:SetJustifyH("LEFT")
+        button.arrow = Text(button, nil, GREY, "RIGHT")
+        button.arrow:SetPoint("RIGHT", button, "RIGHT", -5, 0)
+        button.arrow:SetText("v")
+        local popup = CreateFrame("Frame", nil, frame)
+        popup:SetFrameStrata("FULLSCREEN_DIALOG")
+        popup:EnableMouse(true)
+        Box(popup, {0.04, 0.04, 0.05}, {0.45, 0.45, 0.5})
+        popup:Hide()
+        popup.entries = {}
+        popup:SetScript("OnUpdate", function(self)
+            local down = type(IsMouseButtonDown) == "function" and IsMouseButtonDown("LeftButton")
+            if down and not (self:IsMouseOver() or button:IsMouseOver()) then self:Hide() end
+        end)
+        button.popup = popup
+        function button.Open()
+            local list = Items()
+            popup:ClearAllPoints()
+            popup:SetPoint("TOPLEFT", button, "BOTTOMLEFT", 0, -1)
+            local widest = 0
+            for index, item in ipairs(list) do
+                local entry = popup.entries[index]
+                if not entry then
+                    entry = CreateFrame("Button", nil, popup)
+                    entry:SetHeight(18)
+                    entry.hover = entry:CreateTexture(nil, "HIGHLIGHT")
+                    entry.hover:SetAllPoints()
+                    Color(entry.hover, { 1, 1, 1, 0.1 })
+                    entry.label = Text(entry, nil, TEXT)
+                    entry.label:SetPoint("LEFT", entry, "LEFT", 6, 0)
+                    entry.label:SetPoint("RIGHT", entry, "RIGHT", -6, 0)
+                    entry:SetScript("OnClick", function(self) popup:Hide(); Pick(self.value) end)
+                    entry:SetScript("OnEnter", function(self)   -- what the entry's range disenchants into, when it has results to name
+                        if type(GameTooltip) ~= "table" or not self.ids then return end
+                        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                        GameTooltip:ClearLines()
+                        for _, id in ipairs(self.ids) do GameTooltip:AddLine(F.Style.ItemLabel(id), 1, 1, 1) end
+                        GameTooltip:Show()
+                    end)
+                    entry:SetScript("OnLeave", function() if type(GameTooltip) == "table" then GameTooltip:Hide() end end)
+                    popup.entries[index] = entry
+                end
+                entry:ClearAllPoints()
+                entry:SetPoint("TOPLEFT", popup, "TOPLEFT", 1, -1 - (index - 1) * 18)
+                entry.value, entry.ids = item.value, item.ids
+                entry.label:SetText(item.text)
+                local w = entry.label:GetStringWidth()
+                if F.Number(w) and w > widest then widest = w end
+                entry:Show()
+            end
+            -- as wide as its longest entry needs (6 px each side), no wider
+            local width = math.max(math.ceil(widest) + 14, 50)
+            popup:SetSize(width, #list * 18 + 2)
+            for index = 1, #list do popup.entries[index]:SetWidth(width - 2) end
+            for index = #list + 1, #popup.entries do popup.entries[index]:Hide() end
+            popup:Show()
+        end
+        button:SetScript("OnClick", function()
+            if popup:IsShown() then popup:Hide() else button.Open() end
+        end)
+        button:HookScript("OnEnter", function(self)
+            if type(GameTooltip) ~= "table" then return end
+            GameTooltip:SetOwner(self, "ANCHOR_CURSOR_RIGHT")
+            GameTooltip:ClearLines()
+            GameTooltip:AddLine(tip, 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        button:HookScript("OnLeave", function() if type(GameTooltip) == "table" then GameTooltip:Hide() end end)
+        frame:HookScript("OnHide", function() popup:Hide() end)
+        return button
+    end
+    frame.qualityLabel = Text(frame, nil, GREY)
+    frame.qualityLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE + 6, -(BUY_Y + 3))
+    frame.qualityLabel:SetText("Quality:")
+    frame.qualityButton = MakeDropdown(SIDE + 6 + 52, 92, function()
+        local list = { { value = false, text = QualityText(nil) } }
+        for quality = 2, 4 do list[#list + 1] = { value = quality, text = QualityText(quality) } end
+        return list
+    end, function(value)
+        state.deQuality = value or nil
+        state.deRange = nil   -- (the ranges are the quality's own)
+        state.page = 1
+        U.Refresh()
+    end, "Show only items of one quality. It also names what each item level range disenchants into.")
+    frame.levelLabel = Text(frame, nil, GREY)
+    frame.levelLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE + 6 + 52 + 92 + 10, -(BUY_Y + 3))
+    frame.levelLabel:SetText("Level:")
+    frame.levelButton = MakeDropdown(SIDE + 6 + 52 + 92 + 40 + 6, 92, function()
+        local list = { { value = false, text = "All levels" } }
+        for _, entry in ipairs(RangeEntries()) do
+            list[#list + 1] = { value = entry.key, text = RangeText(entry), ids = state.deQuality and RangeResults(entry) or nil }
+        end
+        return list
+    end, function(value)
+        state.deRange = value or nil
+        state.page = 1
+        U.Refresh()
+    end, "Show only items in one item level range of the disenchant table. Pick a quality first to see what each range gives.")
+    frame.deOnly = { frame.qualityLabel, frame.qualityButton, frame.levelLabel, frame.levelButton }
+end
+
 local function Build()
     frame = CreateFrame("Frame", "DeffarProfessionProfitFrame", UIParent)
     frame:SetSize(MIN_WIDTH, FOOT_Y + 90)
@@ -1587,15 +1805,18 @@ local function Build()
 
     frame.tabs = MakeTabStrip(frame, function(key) U.SelectTab(key) end)
 
-    frame.rankText = Text(frame, nil, TEXT)
-    frame.rankText:SetPoint("TOPLEFT", SIDE + 6, -(36 + TAB_SHIFT))
+    -- Cooking's Rank button: the right end of the checkbox row. No line of text says the rank: its tooltip does.
     frame.rankButton = MakeButton(frame, "Rank: Auto", 104, 20)
-    frame.rankButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -SIDE, -(33 + TAB_SHIFT))
+    frame.rankButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -SIDE, -(CHECK_Y - 1))
     frame.rankButton:SetScript("OnClick", CycleRank)
     frame.rankButton:HookScript("OnEnter", function(self)
         if type(GameTooltip) ~= "table" then return end
         GameTooltip:SetOwner(self, "ANCHOR_CURSOR_RIGHT")
         GameTooltip:ClearLines()
+        if F.String(frame.rankLine) and frame.rankLine ~= "" then
+            local c = frame.rankColor or TEXT
+            GameTooltip:AddLine(frame.rankLine, c[1], c[2], c[3], true)
+        end
         GameTooltip:AddLine("Master Chef rank used for the numbers. Auto reads it from the game; click to set 0-5 by hand (for example to see what a higher rank would do), and again past 5 to return to Auto.", 1, 1, 1, true)
         GameTooltip:Show()
     end)
@@ -1603,24 +1824,23 @@ local function Build()
 
     frame.profitOnly = MakeCheck(frame, "Profitable only",
         function()
-            if state.de then return "Hide items that return less than the Min return (a percent of their price), earn less than the Min profit (in silver) or pay less often than the Min odds (the chance one disenchant beats the price). Untick to see everything, even a loss." end
             return "Hide recipes that lose money at the rank in use."
-        end, SIDE + 6, -(62 + TAB_SHIFT),
-        function() Toggle(state.de and "marginOnly" or "profitOnly") end)
+        end, SIDE + 6, -CHECK_Y,
+        function() Toggle("profitOnly") end)
     frame.ownedFree = MakeCheck(frame, "Owned mats free", "Count a material you already hold enough of for one craft as free, instead of at its auction or vendor price.",
-        SIDE + 6 + 124, -(62 + TAB_SHIFT), function() Toggle("ownedFree") end)
+        SIDE + 6 + 124, -CHECK_Y, function() Toggle("ownedFree") end)
     frame.showAH = MakeCheck(frame, "AH column", "Show the other sale price next to the profit, for comparison: the Auctionator price (last scan) when selling to a vendor, the vendor price when selling at the AH.",
-        SIDE + 6 + 248, -(62 + TAB_SHIFT), function() Toggle("showAH") end)
+        SIDE + 6 + 248, -CHECK_Y, function() Toggle("showAH") end)
     frame.sellAH = MakeCheck(frame, "Sell at AH", "Work out profit, margin, per hour and the colours from the Auctionator price less the 5% auction house cut, instead of the vendor price.",
-        SIDE + 6 + 372, -(62 + TAB_SHIFT), function() Toggle("sellAH") end)
+        SIDE + 6 + 372, -CHECK_Y, function() Toggle("sellAH") end)
     -- the same profit from DISENCHANTING the result instead (Tailoring crafts: cloth gear): only when the character has Enchanting
     frame.sellDE = MakeCheck(frame, "Disenchant", "Work out profit, margin, per hour and the colours from what the finished piece disenchants into (Auctionator prices of the dust and essences, less the 5% auction house cut), instead of the vendor price. Needs Enchanting; only weapons and armour of uncommon or better quality can be disenchanted.",
-        SIDE + 6 + 496, -(62 + TAB_SHIFT), function() Toggle("sellDE") end)
-    -- under the Rank button, at the right: unticked, the profession's recipes the character has not learned are listed too (Catalog.lua)
+        SIDE + 6 + 496, -CHECK_Y, function() Toggle("sellDE") end)
+    -- on the Budget row, at the right: unticked, the profession's recipes the character has not learned are listed too (Catalog.lua)
     frame.known = MakeCheck(frame, "Known recipes", "Ticked: only the recipes this character has learned. Unticked: every recipe of the profession that can be obtained in the game, learned or not (in an earthy red), to see what a recipe would pay before learning it.",
         0, 0, function() Toggle("showUnlearned") end)
     frame.known:ClearAllPoints()
-    frame.known:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -SIDE, -(62 + TAB_SHIFT))
+    frame.known:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -SIDE, -BUDGET_Y)   -- (the row of the Budget box: the checkbox row above is full when the character also has Enchanting and its Disenchant box takes the right end)
     for _, box in ipairs({ frame.profitOnly, frame.ownedFree, frame.showAH, frame.sellAH, frame.sellDE, frame.known }) do box:SetSize(122, 18) end   -- (side by side, 124 apart)
 
     -- Budget and odds for the [A] button (Shopping.lua): flat one-line number boxes. `commit(text)` runs when
@@ -1710,7 +1930,7 @@ local function Build()
     frame.marginLabel = marginLabel
 
     -- Enchanting tab: the least profit an item must show to be listed, in silver AND copper. Saved in copper as db.minProfitCopper.
-    local MIN_PROFIT_TIP = "The least profit an item must show to be listed on the Enchanting tab (with Apply filters ticked): silver and copper. 0 and 0 lists everything that pays at all."
+    local MIN_PROFIT_TIP = "The least profit an item must show to be listed on the Enchanting tab : silver and copper. 0 and 0 lists everything that pays at all."
     local function MinProfitCurrent()
         return F.Number(F.db.minProfitCopper) and F.db.minProfitCopper >= 0 and F.db.minProfitCopper or 100
     end
@@ -1756,12 +1976,12 @@ local function Build()
     frame.maxAgeLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE + 6 + 442, -(BUDGET_Y + 3))
     frame.maxAgeLabel:SetText("Max age:")
     frame.maxAgeBox = MakeInput(SIDE + 6 + 442 + 52, 28, 2,
-        function() return tostring(F.Integer(F.db.maxAge, 0, 99) and F.db.maxAge or 1) end,
+        function() return tostring(F.Disenchant.MaxAge()) end,
         function(text)
             local number = tonumber(text)
-            if F.Integer(number, 0, 99) then F.db.maxAge = number end
+            if F.Integer(number, 0, F.Disenchant.MAX_AGE) then F.db.maxAge = number end
         end,
-        "The oldest price, in days, the Enchanting list trusts (with Apply filters ticked). Auctionator keeps every price until a newer one replaces it, so an item sold since your last scan stays in its database with its old price: 0 shows only prices seen today, 1 also yesterday's. An item's tooltip shows how old its price is.")
+        "The oldest price, in days, the Enchanting list trusts: 0 shows only prices seen today, 1 also yesterday's. Never more than 1: Auctionator keeps every price until a newer one replaces it, so an item sold since your last scan stays in its database with its old price, and those are left out.")
     frame.maxAgeUnit = Text(frame, nil, GREY)
     frame.maxAgeUnit:SetPoint("LEFT", frame.maxAgeBox, "RIGHT", 4, 0)
     frame.maxAgeUnit:SetText("d")
@@ -1829,8 +2049,10 @@ local function Build()
     frame.searchLabel:SetPoint("RIGHT", search, "LEFT", -6, 0)
     frame.searchLabel:SetText("Search:")
 
+    BuildDropdowns()
+
     -- the controls that only mean something for recipes (hidden on the Enchanting tab, U.Refresh)
-    frame.recipeOnly = { label, frame.budgetBox, coin, oddsLabel, frame.oddsBox, percent, buyLabel, frame.buyBox, buyUnit, frame.maxCheck,
+    frame.recipeOnly = { frame.profitOnly, label, frame.budgetBox, coin, oddsLabel, frame.oddsBox, percent, buyLabel, frame.buyBox, buyUnit, frame.maxCheck,
         frame.ownedFree, frame.sellAH, frame.showAH, frame.sellDE }
 
     local function Heading(key, text, sortKey, justify)

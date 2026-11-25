@@ -212,7 +212,7 @@ function F.Catalog.OtherVendor(recipe)
 end
 
 -- Who gives a recipe: the name, the kind and, for a vendor only the OTHER side's sells, that side ("Horde"). A recipe nobody of this side can
--- buy must say so loudly wherever it is shown (Source, Chat, the name tooltip, the list row).
+-- buy must say so loudly wherever it is shown (the name tooltip, the list row).
 function F.Catalog.Giver(recipe)
     local kind = type(recipe) == "table" and F.String(recipe.kind) and recipe.kind or nil
     if not kind then return nil, nil, nil end
@@ -236,22 +236,15 @@ function F.Catalog.OnlySide(recipe)
     return side
 end
 
--- Who gives a recipe, plain: "Kendor Kabonka (Vendor)", or "Vendor" when nobody is named.
-function F.Catalog.Source(recipe)
-    local name, kind, only = F.Catalog.Giver(recipe)
-    if not kind then return nil end
-    local text = name and (name .. " (" .. kind .. ")") or kind
-    return only and (text .. " - " .. only:upper() .. " ONLY") or text
-end
-
--- Where an unlearned recipe is learned, as plain text for a tooltip: its skill level and who gives it.
-function F.Catalog.Where(recipe)
-    local skill = type(recipe) == "table" and F.Integer(recipe.skill, 1, 9999) and recipe.skill or nil
-    local parts = {}
-    if skill then parts[#parts + 1] = "needs skill " .. skill end
-    local source = F.Catalog.Source(recipe)
-    if source then parts[#parts + 1] = "from: " .. source end
-    return #parts > 0 and (table.concat(parts, ", ") .. ".") or "not known to this character."
+-- How the recipe item binds, as the words a tooltip uses: "Binds on Pickup" / "Binds on Equip" / "Binds on Use"; nil when it does not bind, the
+-- recipe has no item (a trainer's) or the item data has not arrived yet (it is asked for, and the window redraws when it does).
+function F.Catalog.Bind(recipe)
+    if type(recipe) ~= "table" or not F.Integer(recipe.item, 1, 2147483647) then return nil end
+    local bind = F.ItemMeta(recipe.item).bind
+    if bind == 1 then return "Binds on Pickup" end
+    if bind == 2 then return "Binds on Equip" end
+    if bind == 3 then return "Binds on Use" end
+    return nil
 end
 
 -- The colour code of the skill a recipe needs: green when the character's skill in that profession reaches it, red when it does not, sand
@@ -264,7 +257,7 @@ function F.Catalog.SkillColor(recipe, prof)
     return have >= recipe.skill and S.GREEN or S.RED
 end
 
--- The two coloured pieces the chat line and the name tooltip of an unlearned recipe share (one place, so they cannot drift apart):
+-- The two coloured pieces of an unlearned recipe's name tooltip:
 --   Status: "(175) not learned."  (the skill green when the character's reaches it, red when not; "not learned." in the earthy red)
 --   Source: "Source: Kendor Kabonka (Vendor) HORDE ONLY"  (the name in sand, the kind in grey, the side in red when only the other side sells it)
 function F.Catalog.Status(recipe, prof)
@@ -285,24 +278,10 @@ function F.Catalog.SourceLine(recipe)
     return text
 end
 
--- The chat line for a click on an unlearned recipe: the made item's icon and clickable name, then the two pieces above:
---   [icon] [Item] (175) not learned. Source: Kendor Kabonka (Vendor)
-function F.Catalog.Chat(recipe, prof)
-    local meta = F.ItemMeta(recipe.out)
-    local link = meta.name or recipe.name or ("Item " .. tostring(recipe.out))
-    if F.Has(_G.C_Item, "GetItemInfo") then
-        local _, found = _G.C_Item.GetItemInfo(recipe.out)
-        if F.String(found) and found ~= "" then link = found end
-    end
-    local icon = meta.icon and ("|T" .. tostring(meta.icon) .. ":0|t ") or ""
-    local source = F.Catalog.SourceLine(recipe)
-    return icon .. link .. " " .. F.Catalog.Status(recipe, prof) .. (source and (" " .. source) or "")
-end
-
--- A click on an unlearned recipe: the chat line. With `pin` (Ctrl-click) and a vendor for this side that has a position, the vendor is also
--- pinned on the map (Waypoint.lua) and the world map opened on its zone; a second Ctrl-click takes the pin away.
+-- A click on an unlearned recipe. A plain click says nothing (the tooltip has what the recipe is and where it comes from); with `pin`
+-- (Ctrl-click) and a vendor for this side that has a position, the vendor is pinned on the map (Waypoint.lua) and the world map opened on its
+-- zone, and a second Ctrl-click takes the pin away. Only the pin says anything in the chat.
 function F.Catalog.Click(recipe, prof, pin)
-    F.Print(F.Catalog.Chat(recipe, prof))
     if not pin then return end
     local _, npc = F.Catalog.Vendor(recipe)
     if not (npc and npc.map and npc.x and npc.y) then

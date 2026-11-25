@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.43.11
+- Hovering an unlearned recipe now shows everything in the tooltip: `(175) not learned.` (the skill green when yours reaches it, red when not), `Source: Kendor Kabonka (Vendor)` for your faction (or `HORDE ONLY` / `ALLIANCE ONLY` in red), and `Binds on Pickup` / `Binds on Equip`.
+- A plain click on an unlearned recipe no longer prints in chat. Ctrl-click still pins the vendor on the map.
+- Vendors are now known for every vendor-sold Cooking recipe, per faction.
+
 ## 0.43.9
 - **Known recipes** box (Cooking): untick it to list every obtainable Cooking recipe, learned or not. Unlearned ones are in an earthy red.
 - Click an unlearned recipe to see in chat where it comes from: `[Item] (175) not learned. Source: Kendor Kabonka (Vendor)`. The skill is green when yours reaches it and red when not. Vendors are named for your faction; a recipe only the other faction sells says `HORDE ONLY` / `ALLIANCE ONLY`.

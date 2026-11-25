@@ -2,7 +2,7 @@
 -- caches, the Master Chef rank read, and the list of rows the window shows. No frames (UI.lua) and
 -- no event registration (Core.lua). The arithmetic is in Calc.lua.
 local addonName, F = ...
-F.VERSION = "0.43.9"
+F.VERSION = "0.43.11"
 F.CALLER = addonName   -- Auctionator wants the calling addon's name as its first argument
 F.eventIssues = {}
 
@@ -264,7 +264,7 @@ function F.ItemMeta(id)
             if saved.icon ~= nil and (type(saved.icon) == "number" or type(saved.icon) == "string") then m.icon = saved.icon end
         end
     end
-    if m.sell ~= nil and m.class ~= nil and m.name then return m end
+    if m.sell ~= nil and m.class ~= nil and m.name and m.bindRead then return m end
     if not m.icon and F.Has(C_Item, "GetItemInfoInstant") then
         local _, _, _, _, icon, classID, subclassID = C_Item.GetItemInfoInstant(id)
         if F.Readable(icon) and (type(icon) == "number" or type(icon) == "string") then m.icon = icon end
@@ -272,7 +272,7 @@ function F.ItemMeta(id)
         if m.subclass == nil and F.Integer(subclassID, 0, 100) then m.subclass = subclassID end
     end
     if F.Has(C_Item, "GetItemInfo") then
-        local name, _, quality, _, _, _, _, stack, _, icon, sell, classID, subclassID = C_Item.GetItemInfo(id)
+        local name, _, quality, _, _, _, _, stack, _, icon, sell, classID, subclassID, bindType = C_Item.GetItemInfo(id)
         if F.String(name) and name ~= "" then m.name = name end
         if F.Integer(stack, 1, 100000) then m.stack = stack end   -- the 8th return: how many fit in one bag slot
         if F.Integer(quality, 0, 10) then m.quality = quality end
@@ -280,6 +280,8 @@ function F.ItemMeta(id)
         if F.Integer(sell, 0, MAX_INT) then m.sell = sell end
         if F.Integer(classID, 0, 100) then m.class = classID end
         if F.Integer(subclassID, 0, 100) then m.subclass = subclassID end
+        if F.String(name) and name ~= "" then m.bindRead = true end   -- (read once the item is there, so the early return above does not skip it)
+        if F.Integer(bindType, 0, 10) then m.bind = bindType end   -- the 14th return: 0 none, 1 on pickup, 2 on equip, 3 on use (FOR-0204, a HYPOTHESIS on Forever)
         if m.sell ~= nil and F.db and type(F.db.items) == "table" and m.name and m.quality and m.icon then
             local saved = F.db.items[id]   -- the item is really loaded now: keep what the next session needs
             if type(saved) ~= "table" then saved = {}; F.db.items[id] = saved end

@@ -3,7 +3,7 @@
 ## Notes: Shows which of your profession recipes earn the most gold per hour, with one-click buttons to buy materials and craft your best recipe (/dpp).
 ## Author: Deffar
 ## Category: Professions
-## Version: 0.43.9
+## Version: 0.43.11
 ## OptionalDeps: Auctionator
 ## IconTexture: Interface\AddOns\DeffarProfessionProfit\icon.tga
 ## SavedVariables: DeffarProfessionProfitDB

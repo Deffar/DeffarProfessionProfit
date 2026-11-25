@@ -1400,6 +1400,8 @@ function ShowTip(row, refresh)
         tip:AddLine(F.Catalog.Status(d.recipe, F.Tab()))
         local source = F.Catalog.SourceLine(d.recipe)
         if source then tip:AddLine(source) end
+        local bind = F.Catalog.Bind(d.recipe)   -- BoP or BoE, so a drop is not a surprise
+        if bind then tip:AddLine(bind, St.DIM[1], St.DIM[2], St.DIM[3]) end
     end
     St.Line(tip, "Makes", St.Count(ev.yield == math.floor(ev.yield) and tostring(ev.yield) or string.format("%.1f", ev.yield))
         .. (d.item.id and (" x " .. St.ItemLabel(d.item.id)) or ""))
@@ -1413,7 +1415,6 @@ function ShowTip(row, refresh)
     -- what the clicks do, one short line each
     if d.unknown then
         local _, vendor = F.Catalog.Vendor(d.recipe)
-        tip:AddLine("Click: Where it is learned", 0.5, 0.8, 1)
         if vendor and vendor.map then tip:AddLine("Ctrl-click: Pin the vendor", 0.5, 0.8, 1) end
     else
         tip:AddLine("Click: Open recipe", 0.5, 0.8, 1)

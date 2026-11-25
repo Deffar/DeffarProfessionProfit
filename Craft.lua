@@ -93,7 +93,7 @@ function C.Best(prof)
     local best, any
     local skipped, makeable = {}, {}
     for _, row in ipairs(rows or {}) do
-        local crafts = C.Crafts(row.recipe)
+        local crafts = row.unknown and 0 or C.Crafts(row.recipe)   -- (a recipe the character has not learned cannot be made)
         if crafts >= 1 then
             local needs, names = C.Unmet(row.id)
             if needs then

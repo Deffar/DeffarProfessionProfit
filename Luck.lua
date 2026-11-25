@@ -466,7 +466,10 @@ function L.Aggregate(scope, filterID, prof)
     prof = prof or "cooking"
     local root = L.Root(scope)
     local out = { items = {}, ranks = {}, recipes = 0, worth = 0, worthKnown = true,
-        total = { c = 0, x = 0, o = 0, expected = 0, variance = 0, s = 0, g = 0, e = 0, k = 0, u = 0, secs = 0 } }
+        total = { c = 0, x = 0, o = 0, expected = 0, variance = 0, s = 0, g = 0, e = 0, k = 0, u = 0, secs = 0 },
+        -- the items marked as sold at the auction house, added up on their own at today's AH prices (count = how many are marked,
+        -- unpriced = those Auctionator has no price for: their crafts count, their money does not)
+        ahTotal = { c = 0, x = 0, o = 0, expected = 0, variance = 0, s = 0, g = 0, k = 0, u = 0, secs = 0, count = 0, unpriced = 0 } }
     if not root then return out end
     local C, total = F.Calc, out.total
     for id, entry in pairs(root) do
@@ -509,11 +512,11 @@ function L.Aggregate(scope, filterID, prof)
                 out.items[#out.items + 1] = item
                 out.recipes = out.recipes + 1
                 out.worth = out.worth + item.worth
-                -- An item the player sells at the auction house (L.ToggleAH): its crafts and luck still count, but its money is the vendor price, which is not what it
-                -- brings in, so it is left out of the money totals (the AH sales tab has what it really brought in).
+                -- An item the player sells at the auction house (L.ToggleAH) is not in the main total (the "Vendor" row): all of it, its crafts, extras and
+                -- luck as well as its money, moves to out.ahTotal below, which values it at AH prices.
                 item.ah = prof ~= "enchanting" and F.db ~= nil and type(F.db.luckAH) == "table" and F.db.luckAH[id] == true
-                for _, key in ipairs({ "c", "x", "o", "expected", "variance", "s", "g", "e", "k", "u" }) do
-                    if not (item.ah and (key == "s" or key == "g" or key == "e" or key == "k" or key == "u")) then
+                if not item.ah then
+                    for _, key in ipairs({ "c", "x", "o", "expected", "variance", "s", "g", "e", "k", "u" }) do
                         total[key] = total[key] + item[key]
                     end
                 end
@@ -523,6 +526,22 @@ function L.Aggregate(scope, filterID, prof)
                 item.sec, item.secFrom = F.CraftSeconds(id)
                 item.secs = item.k * item.sec
                 if not item.ah then total.secs = total.secs + item.secs end
+                if item.ah then
+                    -- Its money at the auction house: what the crafts made (a craft's yield and its extras) at today's Auctionator price less the
+                    -- cut, against what the materials cost (item.s, as the vendor figures use). Only the crafts that were priced (k of c) count.
+                    local at = out.ahTotal
+                    for _, key in ipairs({ "c", "x", "o", "expected", "variance" }) do at[key] = at[key] + item[key] end
+                    at.count = at.count + 1
+                    local price = item.out and F.AuctionPrice(item.out) or nil
+                    if price and item.k > 0 and item.c > 0 then
+                        local net = math.floor(price * (1 - F.AH_CUT))
+                        local units = (item.c * item.y + item.x) * item.k / item.c
+                        item.ahView = { s = item.s, g = math.floor(units * net + 0.5), k = item.k, u = item.u, secs = item.secs, units = units, net = net }
+                        at.s, at.g, at.k, at.u, at.secs = at.s + item.s, at.g + item.ahView.g, at.k + item.k, at.u + item.u, at.secs + item.secs
+                    else
+                        at.unpriced = at.unpriced + 1
+                    end
+                end
             end
         end
     end
@@ -533,6 +552,8 @@ function L.Aggregate(scope, filterID, prof)
     for rank, r in pairs(out.ranks) do r.stats = C.LuckStats(r.c, r.x, rank) end
     local luck = C.LuckTotal(total.x, total.expected, total.variance)
     total.z, total.sd = luck.z, luck.sd
+    local ahLuck = C.LuckTotal(out.ahTotal.x, out.ahTotal.expected, out.ahTotal.variance)
+    out.ahTotal.z, out.ahTotal.sd = ahLuck.z, ahLuck.sd
     return out
 end
 

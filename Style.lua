@@ -12,6 +12,8 @@ F.Style = S
 
 S.DIM = { 0.7, 0.7, 0.73 }            -- the left side of a tooltip line
 S.ORANGE = { 1, 0.65, 0.2 }            -- a remark
+S.RUST = { 0.78, 0.38, 0.33 }            -- an earthy red: a recipe the character has not learned (a name in the main window)
+S.RUSTCODE = "|cffc76152"                      -- the same as a colour code (chat lines)
 S.QUALITY = { [0] = {0.62, 0.62, 0.62}, [1] = {0.90, 0.90, 0.92}, [2] = {0.12, 1, 0},
     [3] = {0, 0.44, 0.87}, [4] = {0.64, 0.21, 0.93}, [5] = {1, 0.50, 0} }
 

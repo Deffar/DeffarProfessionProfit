@@ -2,7 +2,7 @@
 -- caches, the Master Chef rank read, and the list of rows the window shows. No frames (UI.lua) and
 -- no event registration (Core.lua). The arithmetic is in Calc.lua.
 local addonName, F = ...
-F.VERSION = "0.41.4"
+F.VERSION = "0.43.9"
 F.CALLER = addonName   -- Auctionator wants the calling addon's name as its first argument
 F.eventIssues = {}
 
@@ -846,11 +846,14 @@ function F.BuildRows(prof)
     local craftCtx = F.CraftContext()
 
     local oldest
-    for id, recipe in pairs(recipes) do
+    -- One row for a recipe: a learned one (the character's saved recipes), or with `unknown` one of the profession's catalog
+    -- (Catalog.lua) that the character has not learned, listed when "Known recipes" is unticked.
+    local function Add(id, recipe, unknown)
         if type(recipe) == "table" and F.Integer(recipe.out, 1, 2147483647) and type(recipe.r) == "table"
             and (proc or F.ItemMeta(recipe.out).sell ~= 0 or (db.sellAH == true and F.AuctionPrice(recipe.out))
                 or (db.sellDE == true and (F.Disenchant.ValueOf(recipe.out) or 1) > 0)) then   -- (a result nobody buys is only ever a material)
             local item = F.ItemMeta(recipe.out)
+            if unknown and not F.IsFood(item) then return end   -- (a learned recipe is only kept for food; the catalog's wait for the item data)
             local seconds, secondsFrom = F.CraftSeconds(id)
             -- Materials the player makes cheaper than they can buy them: costed by their own materials, and their
             -- casting time added to this recipe's.
@@ -880,10 +883,16 @@ function F.BuildRows(prof)
             -- the optional AH comparison: what the finished food would fetch on the auction house
             local ah = F.AuctionPrice(recipe.out)
             local vendor = item.sell   -- vendorValue is the other side of the comparison column in "Sell at AH" mode
-            rows[#rows + 1] = { id = id, recipe = recipe, ev = ev, item = item, via = via,
+            rows[#rows + 1] = { id = id, recipe = recipe, ev = ev, item = item, via = via, unknown = unknown or nil,
                 ahValue = ah and ah * ev.yield or nil,
                 vendorValue = (vendor and vendor > 0) and vendor * ev.yield or nil,
                 name = recipe.name or item.name or ("Recipe " .. id) }
+        end
+    end
+    for id, recipe in pairs(recipes) do Add(id, recipe, false) end
+    if db.showUnlearned == true and F.CATALOG and F.CATALOG[prof] then
+        for id, recipe in pairs(F.CATALOG[prof]) do
+            if not recipes[id] then Add(id, recipe, true) end
         end
     end
     info.oldest = oldest

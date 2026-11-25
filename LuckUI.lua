@@ -133,25 +133,29 @@ local function Cells(r)
     local rankZero = r.ranks and r.ranks[0] and r.ranks[0].x > 0
     if rankZero then cells.luck = { "extras?!", W.RED }   -- nothing is expected at rank 0: the assumption would be wrong
     else cells.luck = { LuckText(r.z) } end
-    if r.ah then   -- sold at the auction house: the vendor figures would only look like a loss
+    -- the money: the vendor figures, or for an item marked as sold at the AH its crafts at today's AH prices (Luck.lua ahView), as the
+    -- "Auction House" row under the Total does for all of those together; "AH" when Auctionator has no price for it
+    local m = r
+    if r.ah then m = r.ahView or { k = 0 } end
+    if r.ah and not r.ahView then
         cells.spent, cells.gained, cells.profit, cells.hour = { "AH", W.GREY }, { "AH", W.GREY }, { "AH", W.GREY }, { "AH", W.GREY }
-    elseif r.k > 0 then
-        local star = r.u > 0 and " |cffff9933*|r" or ""
-        cells.spent = { F.Money(r.s) .. star, W.TEXT }
-        cells.gained = { F.Money(r.g) .. star, W.TEXT }
-        local profit = r.g - r.s
+    elseif m.k > 0 then
+        local star = m.u > 0 and " |cffff9933*|r" or ""
+        cells.spent = { F.Money(m.s) .. star, W.TEXT }
+        cells.gained = { F.Money(m.g) .. star, W.TEXT }
+        local profit = m.g - m.s
         cells.profit = { F.ProfitText(profit), W.TEXT }   -- "+45s" in green, "-20s" in red (the text carries its colour)
         -- profit per hour of casting: the real profit of the priced crafts over their casting time (crafts x seconds
         -- per craft), so it follows how many were cooked; buying and selling time are not in it
-        if r.secs and r.secs > 0 then
-            cells.hour = { F.ProfitText(profit * 3600 / r.secs) .. " |cff8a8a8a/hr|r", W.TEXT }
+        if m.secs and m.secs > 0 then
+            cells.hour = { F.ProfitText(profit * 3600 / m.secs) .. " |cff8a8a8a/hr|r", W.TEXT }
         else
             cells.hour = { "-", W.GREY }
         end
     else
         cells.spent, cells.gained, cells.profit, cells.hour = { "-", W.GREY }, { "-", W.GREY }, { "-", W.GREY }, { "-", W.GREY }
     end
-    cells.avg = (r.k > 0 and not r.ah) and { F.Money(math.floor(r.g / r.k)), W.TEXT } or { "-", W.GREY }
+    cells.avg = (m.k > 0 and (not r.ah or r.ahView)) and { F.Money(math.floor(m.g / m.k)), W.TEXT } or { "-", W.GREY }
     return cells
 end
 
@@ -222,7 +226,7 @@ local function ShowTip(row, refresh)
     else
         Line(tip, "Crafts", Paint(SAND, tostring(item.c)))
     end
-    if item.ah then Note(tip, "Sold at the AH: its money is left out of the totals.") end
+    if item.ah then Note(tip, "Sold at the AH: its money is at today's AH prices, and it is in the Auction House row, not the Vendor row.") end
     W.ShowLines(row, tip, refresh)
 end
 
@@ -264,19 +268,23 @@ local function ShowProfitTip(row, refresh)
         W.ShowLines(row, tip, refresh)
         return
     end
-    if item.ah then
-        Note(tip, "Marked as sold at the AH: its vendor money is left out of the totals. The AH sales tab has what it brought in.")
-    elseif item.k > 0 then
-        local profit = item.g - item.s
+    local view = item.ahView   -- sold at the AH: the crafts at today's Auctionator price less the cut
+    if item.ah and not view then
+        Note(tip, "Marked as sold at the AH, but Auctionator has no price for it (or nothing was priced). The AH sales tab has what it brought in.")
+    elseif view or item.k > 0 then
+        local made = view and view.g or item.g
+        local profit = made - item.s
         local units = item.c * (F.Number(item.y) and item.y or 1) + item.x
-        if item.u == 0 and units > 0 then
+        if view then
+            Line(tip, Grey("Made: ") .. Items(math.floor(view.units + 0.5)) .. Grey(" x ") .. F.Money(view.net) .. Grey(" (AH, after the cut)"), F.Money(made))
+        elseif item.u == 0 and units > 0 then
             Line(tip, Grey("Made: ") .. Items(units) .. Grey(" x ") .. F.Money(math.floor(item.g / units)), F.Money(item.g))
         else
             Line(tip, "Made, at the vendor price", F.Money(item.g))
         end
         Line(tip, Grey("Materials: ") .. Crafts(item.k) .. Grey(" x ") .. F.Money(math.floor(item.s / item.k)), F.Money(item.s))
         Line(tip, "Profit", Signed(profit))
-        if F.PROFESSIONS[prof].proc then Line(tip, "At average luck", Signed(item.e - item.s)) end
+        if F.PROFESSIONS[prof].proc and not view then Line(tip, "At average luck", Signed(item.e - item.s)) end
         if item.secs and item.secs > 0 then
             tip:AddLine(" ")
             Line(tip, Grey("Casting: ") .. Crafts(item.k) .. Grey(" x ") .. Seconds(string.format("%.1f s", item.sec)) .. (item.secFrom == "default" and Grey(" (assumed)") or item.secFrom == "scaled" and Grey(" (estimated)") or ""),
@@ -290,7 +298,7 @@ local function ShowProfitTip(row, refresh)
     -- counted before lots were kept, the recipe with the price the next unit would be counted at
     local char = F.Char()
     local recipe = char and (F.RecipesOf(char, prof) or {})[item.id]
-    if not item.ah and type(item.mats) == "table" and next(item.mats) ~= nil then
+    if type(item.mats) == "table" and next(item.mats) ~= nil then
         tip:AddLine(" ")
         tip:AddLine("Materials used (your oldest purchases first)", DIM[1], DIM[2], DIM[3])
         local ids = {}
@@ -345,7 +353,11 @@ local HEADINGS = { item = "Item", c = "Crafts", x = "Extras", exp = "Expected", 
 -- whichever way the list is sorted).
 local function SortValue(item, key)
     if key == "item" then return (item.name or ""):lower() end
-    if item.ah and (key == "spent" or key == "gained" or key == "avg" or key == "profit" or key == "hour") then return nil end   -- (left out of the money)
+    local money = item   -- (an item sold at the AH is sorted by its AH figures; none without a price)
+    if item.ah and (key == "spent" or key == "gained" or key == "avg" or key == "profit" or key == "hour") then
+        if not item.ahView then return nil end
+        money = item.ahView
+    end
     if item.prof == "auction" then   -- (Sales.lua: the same cells, other figures)
         if key == "c" then return item.c end
         if key == "x" then return item.x end
@@ -361,11 +373,11 @@ local function SortValue(item, key)
     if key == "exp" then return item.expected end
     if key == "real" then return item.c > 0 and item.x / item.c or nil end
     if key == "luck" then return item.z end
-    if key == "spent" then return item.k > 0 and item.s or nil end
-    if key == "gained" then return item.k > 0 and item.g or nil end
-    if key == "avg" then return item.k > 0 and item.g / item.k or nil end
-    if key == "profit" then return item.k > 0 and (item.g - item.s) or nil end
-    if key == "hour" then return (item.k > 0 and item.secs and item.secs > 0) and ((item.g - item.s) * 3600 / item.secs) or nil end
+    if key == "spent" then return money.k > 0 and money.s or nil end
+    if key == "gained" then return money.k > 0 and money.g or nil end
+    if key == "avg" then return money.k > 0 and money.g / money.k or nil end
+    if key == "profit" then return money.k > 0 and (money.g - money.s) or nil end
+    if key == "hour" then return (money.k > 0 and money.secs and money.secs > 0) and ((money.g - money.s) * 3600 / money.secs) or nil end
     return nil
 end
 
@@ -445,6 +457,7 @@ local function ApplyLayout(prof, data)
     end
     for _, item in ipairs(data.items) do Take(item) end
     if data.recipes > 0 then Take(data.total) end
+    if data.ahTotal and data.ahTotal.count > 0 then Take(data.ahTotal) end
     -- The name column has a fixed least width and takes whatever is left. A name is never measured into the window's width: a long one is cut by its
     -- column (the game ends it with "...") and the whole name is in the tooltip.
     nameMin = NAME_MIN
@@ -495,6 +508,7 @@ local function ApplyLayout(prof, data)
     end
     for _, row in ipairs(rows) do Place(row) end
     Place(frame.total)
+    Place(frame.ahTotal)
     for _, col in ipairs(COLS) do
         local heading = frame.heads[col.key]
         local at = pos[col.key]
@@ -726,8 +740,9 @@ function U.Refresh()
         elseif total.u > 0 then
             lines[#lines + 1] = "* " .. total.u .. " disenchant(s) unpriced."
         end
-    elseif total.c + total.o > 0 then
-        if total.u > 0 then lines[#lines + 1] = "* " .. total.u .. " craft(s) unpriced." end
+    elseif data.recipes > 0 then
+        local unpriced = total.u + ((data.ahTotal and data.ahTotal.u) or 0)
+        if unpriced > 0 then lines[#lines + 1] = "* " .. unpriced .. " craft(s) unpriced." end
     else
         lines[#lines + 1] = "Nothing counted yet."
         if F.Luck.seen == 0 then lines[#lines + 1] = "No craft message seen since login." end
@@ -736,6 +751,7 @@ function U.Refresh()
     local height = frame.summary:GetStringHeight()
     local summaryH = #lines > 0 and (F.Number(height) and math.ceil(height) or 40) or 0
     local hasTotal = data.recipes > 0
+    local ahCount = data.ahTotal and data.ahTotal.count or 0
     if search ~= "" and listed > 0 and #data.items == 0 then   -- the search matched nothing
         hasTotal = false
         lines = { "Nothing in this list matches the search." }
@@ -744,25 +760,40 @@ function U.Refresh()
         summaryH = F.Number(h) and math.ceil(h) or 14
     end
     local block = summaryH > 0 and (4 + summaryH) or 0   -- the notes under the Total row
+    -- one more row under the Total: the items marked as sold at the AH, added up at today's AH prices (tabs with recipes only)
+    -- The main row is "Vendor" on a tab with recipes (the items not ticked); it is left out when every item is ticked.
+    local hasAH = hasTotal and ahCount > 0
+    local hasVendor = hasTotal and data.recipes - ahCount > 0
+    local vendorH = hasVendor and ROW_H or 0
+    local ahH = hasAH and (ROW_H + (hasVendor and 2 or 0)) or 0
+    local rowsH = vendorH + ahH
+    frame.total.name:SetText(def.store ~= nil and "Vendor" or "Total")
 
     -- The footer is the main window's: the window is
     -- as tall as the main window, the divider 36 px above its bottom, and what ends just above the divider (here the Total row or the
     -- notes under it) ends 5 px above it, as the main window's last row does. With several pages the Total row is pinned there, so a
     -- short last page does not leave a taller gap; with one page there is no divider and the Total row sits right under the last item.
     local totalNatural = ROWS_Y + (pages > 1 and MAX_ROWS or shown) * (ROW_H + ROW_GAP) + 4 + extra
-    need_h = totalNatural + (hasTotal and ROW_H or 0) + block + 5 + 36
+    need_h = totalNatural + rowsH + block + 5 + 36
     local tall = math.max(need_h, F.UI.NaturalHeight and F.UI.NaturalHeight() or 0)
     local at = tall - 36
     local totalY = totalNatural
-    if pages > 1 then totalY = at - 5 - block - (hasTotal and ROW_H or 0) end
-    if hasTotal then
+    if pages > 1 then totalY = at - 5 - block - rowsH end
+    if hasVendor then
         W.PlaceTopLeft(frame.total, frame, SIDE, totalY)   -- only when it has moved (a redraw happens after every craft)
         Fill(frame.total.cell, Cells(total))
         frame.total:Show()
     else
         frame.total:Hide()
     end
-    local summaryY = totalY + (hasTotal and (ROW_H + 4) or 6)
+    if hasAH then
+        W.PlaceTopLeft(frame.ahTotal, frame, SIDE, totalY + vendorH + (hasVendor and 2 or 0))
+        Fill(frame.ahTotal.cell, Cells(data.ahTotal))
+        frame.ahTotal:Show()
+    else
+        frame.ahTotal:Hide()
+    end
+    local summaryY = totalY + (hasTotal and (rowsH + 4) or 6)
     frame.summary:ClearAllPoints()
     frame.summary:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE + 6, -summaryY)
     frame.summary:SetHeight(summaryH)
@@ -1229,6 +1260,15 @@ local function Build()
     frame.total.name:SetPoint("LEFT", frame.total, "LEFT", 6, 0)
     frame.total:Hide()
 
+    frame.ahTotal = BuildRow(frame, false)   -- under it: the items sold at the AH at their prices
+    W.Color(frame.ahTotal.fill, { 0.09, 0.075, 0.02, 0.95 })
+    frame.ahTotal.name:SetText("Auction House")
+    frame.ahTotal.name:SetTextColor(W.GOLD[1], W.GOLD[2], W.GOLD[3])
+    frame.ahTotal.icon:Hide()
+    frame.ahTotal.name:ClearAllPoints()
+    frame.ahTotal.name:SetPoint("LEFT", frame.ahTotal, "LEFT", 6, 0)
+    frame.ahTotal:Hide()
+
     frame.measure = W.Text(frame, nil, W.TEXT)   -- never shown: only used to measure text widths
     frame.measure:Hide()
     frame.summary = W.Text(frame, nil, W.TEXT)
@@ -1444,6 +1484,7 @@ function U.Visible()
         local row = rows[index]
         if row:IsShown() and row.item then out[#out + 1] = Line(row, row.name:GetText()) end
     end
-    if frame.total:IsShown() then out[#out + 1] = Line(frame.total, "Total") end
+    if frame.total:IsShown() then out[#out + 1] = Line(frame.total, frame.total.name:GetText()) end
+    if frame.ahTotal:IsShown() then out[#out + 1] = Line(frame.ahTotal, "Auction House") end
     return out, frame.summary:GetText(), F.Luck.SCOPES[Scope()]
 end

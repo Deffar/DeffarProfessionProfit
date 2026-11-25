@@ -736,15 +736,26 @@ local function ShowGaugeTip(gauge)
     GameTooltip:AddLine(St.ItemLabel(info.id) .. (info.total and " whole craft" or " price gauge"), GOLD[1], GOLD[2], GOLD[3])
     local function Line(left, right) GameTooltip:AddDoubleLine(left, right, St.DIM[1], St.DIM[2], St.DIM[3], 1, 1, 1) end
     Line(info.total and "All materials today" or "Today's price", F.Money(math.floor(info.unit + 0.5)) .. St.Grey(" (" .. math.floor(info.ratio * 100 + 0.5) .. "%)"))
-    Line(info.total and "The craft sells for" or "Highest price that breaks even", F.Money(math.floor(info.limit + 0.5)))
+    Line(info.total and (info.proc and string.format("Avg return per craft (+%d%% extra)", math.floor(F.Calc.Chance(info.rank) * 100 + 0.5)) or "The craft sells for") or "Highest price that breaks even", F.Money(math.floor(info.limit + 0.5)))
     if info.marginAt and info.marginAt > 0 then
         Line(St.Paint(St.TEAL, "Your Margin") .. St.Grey(" (" .. info.marginPct .. "%)"), F.Money(math.floor(info.marginAt + 0.5)))
     end
     local green, red = info.limit * info.greenAt, info.limit * info.redAt
     GameTooltip:AddLine(" ")
-    Line(Code(GREEN) .. "Green|r", "up to " .. F.Money(math.floor(green + 0.5)))
-    Line(Code(ORANGE) .. "Orange|r", F.Money(math.floor(green + 0.5)) .. St.Grey(" to ") .. F.Money(math.floor(red + 0.5)))
-    Line(Code(RED) .. "Red|r", F.Money(math.floor(red + 0.5)) .. St.Grey(" to ") .. F.Money(math.floor(info.limit + 0.5)))
+    -- the percentages: the craft's margin at the zone's edges (the whole craft, and a material on a tab without a rank bonus), or on a
+    -- Master Chef tab's material the share of the break-even price the zone ends at (see the sentence below)
+    local calc = F.Calc
+    local gTag, oTag, rTag
+    if info.proc and not info.total then
+        gTag, oTag, rTag = " (up to " .. math.floor(calc.BAND_GREEN * 100 + 0.5) .. "%)", " (" .. math.floor(calc.BAND_GREEN * 100 + 0.5) .. "-" .. math.floor(calc.BAND_RED * 100 + 0.5) .. "%)",
+            " (" .. math.floor(calc.BAND_RED * 100 + 0.5) .. "-100%)"
+    else
+        gTag, oTag, rTag = " (" .. math.floor(calc.MARGIN_GREEN * 100 + 0.5) .. "%+)", " (" .. math.floor(calc.MARGIN_RED * 100 + 0.5) .. "-" .. math.floor(calc.MARGIN_GREEN * 100 + 0.5) .. "%)",
+            " (under " .. math.floor(calc.MARGIN_RED * 100 + 0.5) .. "%)"
+    end
+    Line(Code(GREEN) .. "Green|r" .. St.Grey(gTag), "up to " .. F.Money(math.floor(green + 0.5)))
+    Line(Code(ORANGE) .. "Orange|r" .. St.Grey(oTag), F.Money(math.floor(green + 0.5)) .. St.Grey(" to ") .. F.Money(math.floor(red + 0.5)))
+    Line(Code(RED) .. "Red|r" .. St.Grey(rTag), F.Money(math.floor(red + 0.5)) .. St.Grey(" to ") .. F.Money(math.floor(info.limit + 0.5)))
     GameTooltip:AddLine((info.proc and not info.total)
         and string.format("Zones: %d%% and %d%% of break-even.", math.floor(F.Calc.BAND_GREEN * 100 + 0.5), math.floor(F.Calc.BAND_RED * 100 + 0.5))
         or (info.total and "Zones: a margin of 20% and of 5% on all materials together." or "Zones: the prices that leave a 20% and a 5% margin."),
@@ -1049,7 +1060,9 @@ local function PaintRow(row, d)
     PaintFill(row)
     row.icon:SetTexture(d.item.icon or UNKNOWN_ICON)
     -- the row whose detail panel is open (shift-click) has its name in gold, the colour of the column sorted by
-    SetText(row.name, d.name, (state.expanded ~= nil and state.expanded == d.id) and GOLD or QUALITY[d.item.quality or 1] or TEXT)
+    local only = d.unknown and F.Catalog.OnlySide(d.recipe) or nil   -- (a recipe only the other side's vendor sells: said in the name)
+    SetText(row.name, d.name .. (only and (" " .. F.Style.RED .. "(" .. only .. " only)|r") or ""),
+        (state.expanded ~= nil and state.expanded == d.id) and GOLD or (d.unknown and F.Style.RUST) or QUALITY[d.item.quality or 1] or TEXT)   -- (earthy red: not learned)
     SetText(row.count, d.count[1], d.count[2])
     for key, cell in pairs(d.cells) do
         if row.cell[key] then SetText(row.cell[key], cell[1], cell[2]) end
@@ -1236,6 +1249,8 @@ function U.Refresh()
     frame.showAH.mark:SetShown(db.showAH == true)
     frame.sellAH.mark:SetShown(db.sellAH == true)
     frame.sellDE.mark:SetShown(db.sellDE == true)
+    frame.known:SetShown(not state.de and F.Catalog.Has(tab))   -- (only a profession with a catalog)
+    frame.known.mark:SetShown(db.showUnlearned ~= true)
     frame.showAH.label:SetText((db.sellAH == true or db.sellDE == true) and "Vendor column" or "AH column")
     -- The Enchanting tab has no recipes, materials, budget, odds or crafts to buy for, and its gear sells to a vendor for 1c: those
     -- controls are hidden there and the Margin box moves left, with a Min profit box beside it
@@ -1381,41 +1396,29 @@ function ShowTip(row, refresh)
         ShowLines(row, tip, refresh)
         return
     end
-    tip:AddLine("Click: open it in the " .. F.PROFESSIONS[F.Tab()].name .. " window.", 0.5, 0.8, 1)
-    tip:AddLine("Shift-click: the highest price to pay for each material.", 0.5, 0.8, 1)
+    if d.unknown then   -- not learned: the same coloured pieces as the chat line says (Catalog.lua)
+        tip:AddLine(F.Catalog.Status(d.recipe, F.Tab()))
+        local source = F.Catalog.SourceLine(d.recipe)
+        if source then tip:AddLine(source) end
+    end
     St.Line(tip, "Makes", St.Count(ev.yield == math.floor(ev.yield) and tostring(ev.yield) or string.format("%.1f", ev.yield))
         .. (d.item.id and (" x " .. St.ItemLabel(d.item.id)) or ""))
-    if d.via and #d.via > 0 then
-        tip:AddLine(" ")
+    if d.via and #d.via > 0 then   -- (a material the player crafts instead of buying)
         for _, v in ipairs(d.via) do
             tip:AddDoubleLine("You craft " .. St.Paint(St.SAGE, F.QtyText(v.units) .. "x") .. " " .. St.ItemLabel(v.id),
-                F.Money(math.floor(v.per + 0.5)) .. " each " .. St.Grey("(" .. (v.market and ("buying: " .. F.Money(v.market)) or "no price to buy") .. ")"),
-                0.5, 0.9, 0.5, 1, 1, 1)
+                F.Money(math.floor(v.per + 0.5)) .. " each", 0.5, 0.9, 0.5, 1, 1, 1)
         end
-    end
-    tip:AddLine(" ")
-    tip:AddLine("Materials per craft", St.DIM[1], St.DIM[2], St.DIM[3])
-    for _, line in ipairs(ev.reagents) do
-        local right
-        if line.free then
-            right = "owned (free)"
-        elseif line.unit then
-            local _, source = F.UnitCost(line.id)
-            local saved = F.db.vendorBuy and F.db.vendorBuy[line.id]
-            local tag = source == "ah" and "AH" or "vendor"
-            if source == "ah" then
-                local age = F.AuctionAge(line.id)
-                if age and age >= 1 then tag = tag .. ", " .. math.floor(age) .. " d old" end
-            elseif type(saved) == "table" then
-                tag = tag .. ((saved.l and ", limited stock") or "")   --
-            end
-            right = F.Money(line.unit) .. " each " .. St.Grey("(" .. tag .. ")")
-        else
-            right = "|cffff9933no price|r"
-        end
-        tip:AddDoubleLine("  " .. St.Paint(St.SAGE, F.QtyText(line.qty) .. "x") .. " " .. St.ItemLabel(line.id), right, 1, 1, 1, 1, 1, 1)
     end
     if ev.status == "noprice" then St.Note(tip, "A material has no price yet, so no profit is shown.") end
+    -- what the clicks do, one short line each
+    if d.unknown then
+        local _, vendor = F.Catalog.Vendor(d.recipe)
+        tip:AddLine("Click: Where it is learned", 0.5, 0.8, 1)
+        if vendor and vendor.map then tip:AddLine("Ctrl-click: Pin the vendor", 0.5, 0.8, 1) end
+    else
+        tip:AddLine("Click: Open recipe", 0.5, 0.8, 1)
+    end
+    tip:AddLine("Shift-click: Price limits", 0.5, 0.8, 1)
     ShowLines(row, tip, refresh)
 end
 
@@ -1442,40 +1445,14 @@ function ShowProfitTip(row, refresh)
         ShowLines(row, tip, refresh)
         return
     end
-    St.Line(tip, "Materials per craft", ev.missing > 0 and (F.Money(ev.cost) .. " +?") or F.Money(ev.cost))
-    local basis = SellDE() and "disenchanted, after the cut" or (SellAH() and "AH price, after the 5% cut" or "vendor price")
-    if ev.sellEach and ev.sellEach > 0 then
-        St.Line(tip, St.Items(ev.yield == math.floor(ev.yield) and ev.yield or 1) .. St.Grey(" x ") .. F.Money(ev.sellEach) .. St.Grey(" (" .. basis .. ")"), F.Money(ev.value))
+    St.Line(tip, "Materials", ev.missing > 0 and (F.Money(ev.cost) .. " +?") or F.Money(ev.cost))
+    if state.proc then   -- the average craft with the Master Chef extras (a whole craft's tooltip says the same)
+        St.Line(tip, "Avg return " .. St.Grey("(+" .. math.floor(ev.chance * 100 + 0.5) .. "% extra)"), F.Money(math.floor(ev.expected + 0.5)))
     else
-        St.Line(tip, "One craft sells for", F.Money(ev.value))
+        St.Line(tip, "Sells for", F.Money(ev.value))
     end
-    if SellDE() then F.Disenchant.TipOutcomes(tip, d.recipe.out) end   -- what it disenchants into
-    if state.proc then
-        St.Line(tip, "Profit, no extra result", St.Signed(ev.baseProfit))
-        St.Line(tip, St.Grey("Average at rank ") .. St.Paint(St.SAGE, tostring(ev.rank)) .. St.Grey(" (") .. St.Percent(math.floor(ev.chance * 100 + 0.5) .. "%") .. St.Grey(" extra)"),
-            St.Signed(ev.profit))
-        if ev.needRank == 0 then
-            tip:AddLine("Profitable even with no Master Chef rank.", GREEN[1], GREEN[2], GREEN[3])
-        elseif ev.needRank == -1 then
-            tip:AddLine("Not profitable even at rank 5.", RED[1], RED[2], RED[3])
-        else
-            tip:AddLine("Breaks even from rank " .. ev.needRank .. ".", ORANGE[1], ORANGE[2], ORANGE[3])
-        end
-    else
-        St.Line(tip, "Profit per craft", St.Signed(ev.profit))
-    end
-    if ev.perHour then
-        tip:AddLine(" ")
-        St.Line(tip, "Time per craft", St.Seconds(string.format("%.1f s", ev.seconds)) .. (ev.secondsFrom == "default" and St.Grey(" (assumed)") or ev.secondsFrom == "scaled" and St.Grey(" (estimated)") or ""))
-        St.Line(tip, St.Grey("Per hour: ") .. St.Crafts(math.floor(ev.craftsPerHour)), St.Signed(ev.perHour))
-    end
-    local spread = F.Calc.Spread(ev, F.db.crafts)
-    if spread and spread.sd > 0 then
-        tip:AddLine(" ")
-        St.Line(tip, St.Grey("Over ") .. St.Crafts(spread.crafts), F.Money(spread.total))
-        St.Line(tip, St.Grey("  usual range"), F.Money(spread.low) .. St.Grey(" to ") .. F.Money(spread.high))
-        St.Line(tip, St.Grey("  chance of being ahead"), St.Percent(math.floor(spread.ahead * 100 + 0.5) .. "%"))
-    end
+    St.Line(tip, "Profit", St.Signed(ev.profit))
+    if ev.perHour then St.Line(tip, "Per hour", St.Signed(ev.perHour)) end
     ShowLines(row, tip, refresh)
 end
 
@@ -1484,36 +1461,23 @@ local function ShowShoppingTip(button)
     if type(GameTooltip) ~= "table" or not row.data then return end
     GameTooltip:SetOwner(button, "ANCHOR_CURSOR_RIGHT")
     GameTooltip:ClearLines()
-    GameTooltip:AddLine("Auctionator shopping list", GOLD[1], GOLD[2], GOLD[3])
     if row.data.de then
-        GameTooltip:AddLine("Searches this item at the auction house, up to the price that still leaves your margin.", 1, 1, 1, true)
+        GameTooltip:AddLine("Search it at the auction house", GOLD[1], GOLD[2], GOLD[3])
+        GameTooltip:AddLine("Click: Search", 0.5, 0.8, 1)
         GameTooltip:Show()
         return
     end
-    GameTooltip:AddLine(string.format("Makes the list \"Profession Profit - %s\": auction materials at their price limits, minus what you hold.",
-        row.data.name), 1, 1, 1, true)
-    -- what it would do right now
+    GameTooltip:AddLine(string.format("Profession Profit - %s", row.data.name), GOLD[1], GOLD[2], GOLD[3])   -- the Auctionator list it makes
+    GameTooltip:AddLine("Click: Make the list", 0.5, 0.8, 1)
     local ctx = F.PlanShopping(row.data)
-    GameTooltip:AddLine(" ")
-    local planned = ctx.plan and ctx.plan.crafts or ctx.crafts
-    GameTooltip:AddDoubleLine("Aims for", string.format("%d%% odds of finishing ahead over %d crafts", ctx.odds, planned), 0.7, 0.7, 0.73, 1, 1, 1)
-    GameTooltip:AddDoubleLine("Buys for", ctx.fill and "as many crafts as the budget allows" or (ctx.crafts .. " crafts (/dpp buy)"), 0.7, 0.7, 0.73, 1, 1, 1)
-    GameTooltip:AddDoubleLine("And at least", string.format("%d%% margin on cost", ctx.margin), 0.7, 0.7, 0.73, 1, 1, 1)
-    GameTooltip:AddDoubleLine("Budget", ctx.budget and F.Money(ctx.budget) or "no limit (gold unreadable)", 0.7, 0.7, 0.73, 1, 1, 1)
+    local function Line(left, right) GameTooltip:AddDoubleLine(left, right, F.Style.DIM[1], F.Style.DIM[2], F.Style.DIM[3], 1, 1, 1) end
     if ctx.plan then
-        GameTooltip:AddDoubleLine("Would buy for", ctx.plan.crafts .. " crafts" .. (ctx.plan.limitedBy and " (budget-limited)" or ""), 0.7, 0.7, 0.73, 1, 1, 1)
-        GameTooltip:AddDoubleLine("At most", F.Money(ctx.plan.spend), 0.7, 0.7, 0.73, 1, 1, 1)
-        for index, line in ipairs(row.data.ev.reagents) do
-            local cap = ctx.plan.caps[index] and F.MaterialCap(ctx.plan, index, line.id) or nil   -- the same limit the list gets (never above a vendor's price)
-            if cap then
-                local name = F.ItemMeta(line.id).name or ("Item " .. tostring(line.id))
-                GameTooltip:AddDoubleLine(name .. " up to", F.Money(cap) .. " each", 1, 1, 1, 1, 1, 1)
-            end
-        end
+        Line("Buys", ctx.plan.crafts .. " crafts" .. (ctx.plan.limitedBy and " (budget)" or ""))
+        Line("At most", F.Money(ctx.plan.spend))
     elseif ctx.why == "margin" then
-        GameTooltip:AddLine("Earns too little for those odds and margin.", RED[1], RED[2], RED[3], true)
+        GameTooltip:AddLine("Earns too little for the odds and margin.", RED[1], RED[2], RED[3], true)
     elseif ctx.why == "budget" then
-        GameTooltip:AddLine("Your budget is too small for those odds.", RED[1], RED[2], RED[3], true)
+        GameTooltip:AddLine("The budget is too small for the odds.", RED[1], RED[2], RED[3], true)
     elseif ctx.why == "notok" then
         GameTooltip:AddLine("A material has no price: quantities only.", ORANGE[1], ORANGE[2], ORANGE[3], true)
     end
@@ -1651,7 +1615,12 @@ local function Build()
     -- the same profit from DISENCHANTING the result instead (Tailoring crafts: cloth gear): only when the character has Enchanting
     frame.sellDE = MakeCheck(frame, "Disenchant", "Work out profit, margin, per hour and the colours from what the finished piece disenchants into (Auctionator prices of the dust and essences, less the 5% auction house cut), instead of the vendor price. Needs Enchanting; only weapons and armour of uncommon or better quality can be disenchanted.",
         SIDE + 6 + 496, -(62 + TAB_SHIFT), function() Toggle("sellDE") end)
-    for _, box in ipairs({ frame.profitOnly, frame.ownedFree, frame.showAH, frame.sellAH, frame.sellDE }) do box:SetSize(122, 18) end   -- (side by side, 124 apart)
+    -- under the Rank button, at the right: unticked, the profession's recipes the character has not learned are listed too (Catalog.lua)
+    frame.known = MakeCheck(frame, "Known recipes", "Ticked: only the recipes this character has learned. Unticked: every recipe of the profession that can be obtained in the game, learned or not (in an earthy red), to see what a recipe would pay before learning it.",
+        0, 0, function() Toggle("showUnlearned") end)
+    frame.known:ClearAllPoints()
+    frame.known:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -SIDE, -(62 + TAB_SHIFT))
+    for _, box in ipairs({ frame.profitOnly, frame.ownedFree, frame.showAH, frame.sellAH, frame.sellDE, frame.known }) do box:SetSize(122, 18) end   -- (side by side, 124 apart)
 
     -- Budget and odds for the [A] button (Shopping.lua): flat one-line number boxes. `commit(text)` runs when
     -- Enter is pressed or the box loses focus; Escape puts the saved value back.
@@ -1962,6 +1931,10 @@ local function Build()
                 state.expanded = (state.expanded ~= self.data.id) and self.data.id or nil
                 if type(GameTooltip) == "table" then GameTooltip:Hide() end
                 U.Refresh()
+                return
+            end
+            if self.data.unknown then   -- not learned: there is no recipe to open
+                F.Catalog.Click(self.data.recipe, F.Tab(), type(IsControlKeyDown) == "function" and IsControlKeyDown() == true)   -- (Ctrl: pin the vendor)
                 return
             end
             local ok, problem = F.OpenRecipe(self.data.id, self.data.name, F.Tab())

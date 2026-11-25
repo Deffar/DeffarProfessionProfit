@@ -116,6 +116,52 @@ function C.Best(prof)
     return best, any == true, skipped, makeable
 end
 
+-- Recipes the bags hold the main material of (what no vendor sells: the meat) but not enough of a supply (something a vendor sells, so a
+-- vendor price has been saved for it: the apples, the water) for all the crafts that material allows: { out, name, crafts, missing = { { id,
+-- need = units still lacking } } }, the fewest crafts first (the order the vendor "+" buys in). `crafts` is what the main material allows.
+function C.Shortages(prof)
+    local sold = F.db and type(F.db.vendorBuy) == "table" and F.db.vendorBuy or {}
+    local function IsSupply(ids)
+        for _, id in ipairs(type(ids) == "table" and ids or {}) do
+            if type(sold[id]) == "table" then return true end
+        end
+        return false
+    end
+    local function Held(ids)
+        local have = 0
+        for _, id in ipairs(type(ids) == "table" and ids or {}) do have = have + F.Owned(id) end
+        return have
+    end
+    local list = {}
+    for _, row in ipairs(F.BuildRows(prof) or {}) do
+        local recipe = row.recipe
+        if not row.unknown and type(recipe) == "table" and type(recipe.r) == "table" then
+            local crafts
+            for _, reagent in ipairs(recipe.r) do
+                if not IsSupply(reagent.ids) then
+                    local n = math.floor(Held(reagent.ids) / (tonumber(reagent.qty) or 1))
+                    crafts = crafts and math.min(crafts, n) or n
+                end
+            end
+            if crafts and crafts >= 1 then
+                local missing = {}
+                for _, reagent in ipairs(recipe.r) do
+                    if IsSupply(reagent.ids) and F.Integer((reagent.ids or {})[1], 1, MAX) then
+                        local lacking = crafts * (tonumber(reagent.qty) or 1) - Held(reagent.ids)
+                        if lacking > 0 then missing[#missing + 1] = { id = reagent.ids[1], need = lacking } end
+                    end
+                end
+                if #missing > 0 then list[#list + 1] = { out = recipe.out, name = row.name, crafts = crafts, missing = missing } end
+            end
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.crafts ~= b.crafts then return a.crafts < b.crafts end
+        return a.name < b.name
+    end)
+    return list
+end
+
 -- "Skipped Roast Raptor: needs Iron Oven." for the skipped recipes that would have paid better than `best` (all of them when none).
 local function SkippedText(skipped, best)
     local parts = {}
@@ -188,23 +234,39 @@ local function Tip(button)
     local shift = type(IsShiftKeyDown) == "function" and IsShiftKeyDown() == true
     GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
     GameTooltip:ClearLines()
+    S.StartRules()
     S.Title(GameTooltip, shift and "Create All (AH)" or "Create All")
     if prof then
-        -- every recipe the bags allow and whose requirements are met, the most profitable first (that is the one a click makes);
-        -- when a requirement (a fire, an Iron Oven) keeps every one of them from starting, the recipes it holds back are listed the same way:
-        --   [icon] Item xN
+        -- laid out like the vendor "+" (Vendor.lua): a rule under the title, then per dish
+        --   Craft: [icon] Item xN
         --   +V per (T total): the vendor price of a craft, with Shift the auction house price after the cut
+        --   a rule before the next dish. Every recipe the bags allow and whose requirements are met, the most profitable first (that is
+        --   the one a click makes); when a requirement (a fire, an Iron Oven) keeps every one of them from starting, the recipes it holds
+        --   back are listed the same way. Below them the dishes the meat could make if the supplies were there:
+        --   Craft: [icon] Item xN
+        --   Missing: [icon] Supply xY      (one line for each supply lacking)
         local _, ok = C.Plan(prof)
         local listed = (#makeable == 0 and not ok) and skipped or makeable
+        local shortages = C.Shortages(prof)
+        if #listed > 0 or #shortages > 0 then S.Rule(GameTooltip) end
         for index, entry in ipairs(listed) do
             if index > 8 then GameTooltip:AddLine("...", S.DIM[1], S.DIM[2], S.DIM[3]); break end
-            GameTooltip:AddLine(S.ItemQty(entry.out, entry.name, entry.crafts, S.SAND), 1, 1, 1)
+            if index > 1 then S.Rule(GameTooltip) end
+            GameTooltip:AddLine(S.Paint(S.GOLDCODE, "Craft: ") .. S.ItemQty(entry.out, entry.name, entry.crafts, S.SAND), 1, 1, 1)
             -- what one craft sells for: to a vendor, or with Shift held at the auction house (after its cut), both whatever the sell mode
             local value = shift and C.AuctionValue(entry) or (not shift and C.VendorValue(entry)) or nil
             if value then
                 GameTooltip:AddLine(S.PerTotal(value, value * entry.crafts), 1, 1, 1)
             else
                 GameTooltip:AddLine(S.Grey(shift and "No auction house price." or "A vendor does not buy it."), 1, 1, 1)
+            end
+        end
+        for index, short in ipairs(shortages) do
+            if index > 3 then GameTooltip:AddLine("...", S.DIM[1], S.DIM[2], S.DIM[3]); break end
+            if index > 1 or #listed > 0 then S.Rule(GameTooltip) end
+            GameTooltip:AddLine(S.Paint(S.GOLDCODE, "Craft: ") .. S.ItemQty(short.out, short.name, short.crafts, S.SAND), 1, 1, 1)
+            for _, m in ipairs(short.missing) do
+                GameTooltip:AddLine(S.Paint(S.RED, "Missing:") .. " " .. S.ItemQty(m.id, F.ItemMeta(m.id).name or ("Item " .. m.id), m.need, S.SAGE), 1, 1, 1)
             end
         end
         -- greyed out: a short reason in the tooltip's grey (the missing requirements are named only here, not in the chat line)
@@ -216,7 +278,7 @@ local function Tip(button)
                 end
             end
             -- (with only a requirement missing, the items listed above are what you hold the materials for: no sentence needed)
-            if not (#makeable == 0 and #missing > 0) then S.Reason(GameTooltip, any and "A price is missing." or "No materials.") end
+            if not (#makeable == 0 and #missing > 0) and #shortages == 0 then S.Reason(GameTooltip, any and "A price is missing." or "No materials.") end
             if #missing > 0 then
                 local shown = {}
                 for index, name in ipairs(missing) do
@@ -228,6 +290,7 @@ local function Tip(button)
         end
     end
     GameTooltip:Show()
+    S.FitRules(GameTooltip)
 end
 
 -- Where the window's own Create All / quantity box / Create row is, as a height above the window's bottom edge, and how tall its

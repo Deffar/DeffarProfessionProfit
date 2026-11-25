@@ -182,6 +182,25 @@ local DIM, Line, Note, Signed, Paint = St.DIM, St.Line, St.Note, St.Signed, St.P
 local SAGE, SAND = St.SAGE, St.SAND
 local Items, Crafts, Seconds, Grey, ItemLabel = St.Items, St.Crafts, St.Seconds, St.Grey, St.ItemLabel
 
+-- What each control of the window says on hover: the same short labelled lines as the main window's toolbar (UI.lua ShowControlTip).
+local TIPS = {}
+function TIPS.ah() return { "Sold at AH", { "Counts", "at AH prices" }, { "Row", "Auction House, not Vendor" } } end
+function TIPS.del(armed)
+    if armed then return { "Delete row", { text = "Click again to delete", color = { 1, 0.4, 0.4 } } } end
+    return { "Delete row", { "Scope", "this one only" }, { hint = "Click twice" } }
+end
+function TIPS.edit() return { "Add sales", { "For", "mail looted without the addon" } } end
+function TIPS.back() return { "Profession Profit", { hint = "Click: Back" } } end
+function TIPS.session() return { "Session", { "Counts", "since login or reload" } } end
+function TIPS.char() return { "Character", { "Counts", "this character, saved" } } end
+function TIPS.life() return { "Lifetime", { "Counts", "all characters, saved" } } end
+function TIPS.reset() return { "Reset session", { "Clears", "this session's counts" } } end
+function TIPS.crafted() return { "Crafted", { "Shows", "items you crafted" }, { "Untick", "every item you sold" } } end
+function TIPS.search() return { "Search", { "Matches", "part of an item's name" }, { "Total row", "counts the whole list" }, { "Esc", "clears" } } end
+function TIPS.market()
+    return { "Current Market Values", { "Counts", "units at today's AH price" }, { "Minus", St.Percent("5%") .. " cut, deposit back" }, { "Unticked", "type the money" } }
+end
+
 -- Over the item column: what the item is and how many were counted.
 local function ShowTip(row, refresh)
     local item = row.item
@@ -196,13 +215,13 @@ local function ShowTip(row, refresh)
         Line(tip, "Unsold, not up again", Paint(SAGE, tostring(item.o)))
         if item.r > 0 then Line(tip, "Put up again", Paint(SAGE, tostring(item.r))) end
         Line(tip, "Still listed or in the mail", Paint(SAGE, tostring(item.waiting)))
-        if item.partial then Note(tip, "More sold or returned than seen listed: some was listed before this was watched.") end
+        if item.partial then Note(tip, "Some listed before this was watched") end
         W.ShowLines(row, tip, refresh)
         return
     end
     local proc = F.PROFESSIONS[prof].proc
     if F.PROFESSIONS[prof].disenchant then
-        tip:AddLine("Shift-click: each result against what the table expects.", 0.5, 0.8, 1, true)
+        St.Hint(tip, "Shift-click: Results vs the table")
         Line(tip, "Disenchanted", Paint(SAGE, tostring(item.c)))
         local list = {}
         for id, quantity in pairs(item.res or {}) do list[#list + 1] = { id = id, quantity = quantity } end
@@ -222,11 +241,11 @@ local function ShowTip(row, refresh)
             local r = item.ranks[rank]
             if r then Line(tip, string.format("Master Chef %d/%d", rank, F.RANK_MAX), Crafts(r.c) .. Grey(", ") .. Paint(SAGE, r.x .. " extra")) end
         end
-        if item.o > 0 then Note(tip, item.o .. " craft(s) with an odd quantity: not in the luck.") end
+        if item.o > 0 then Note(tip, item.o .. " odd-quantity crafts left out") end
     else
         Line(tip, "Crafts", Paint(SAND, tostring(item.c)))
     end
-    if item.ah then Note(tip, "Sold at the AH: its money is at today's AH prices, and it is in the Auction House row, not the Vendor row.") end
+    if item.ah then Note(tip, "Sold at AH: AH prices, Auction House row") end
     W.ShowLines(row, tip, refresh)
 end
 
@@ -248,7 +267,7 @@ local function ShowProfitTip(row, refresh)
         if item.unitCost then
             Line(tip, Grey("Crafting: ") .. Paint(SAGE, item.x .. " sold") .. Grey(" x ") .. F.Money(math.floor(item.unitCost)), F.Money(item.crafting))
         elseif item.x > 0 then
-            Note(tip, "No crafting cost on record: the profit is only what the auctions paid.")
+            Note(tip, "No crafting cost: auctions only")
         end
         Line(tip, "Profit", Signed(item.profit))
         if item.x > 0 then Line(tip, "Per unit sold", Signed(math.floor(item.profit / item.x))) end
@@ -261,7 +280,7 @@ local function ShowProfitTip(row, refresh)
             Line(tip, "Gained (results at AH prices, less the cut)", F.Money(item.g))
             Line(tip, "Profit", Signed(item.g - item.s))
             Line(tip, "Per disenchant", Signed(math.floor((item.g - item.s) / item.k)))
-            if item.u > 0 then Note(tip, item.u .. " disenchant(s) had an unpriced result: left out.") end
+            if item.u > 0 then Note(tip, item.u .. " unpriced disenchants left out") end
         else
             tip:AddLine("No money figures yet.", DIM[1], DIM[2], DIM[3], true)
         end
@@ -270,7 +289,7 @@ local function ShowProfitTip(row, refresh)
     end
     local view = item.ahView   -- sold at the AH: the crafts at today's Auctionator price less the cut
     if item.ah and not view then
-        Note(tip, "Marked as sold at the AH, but Auctionator has no price for it (or nothing was priced). The AH sales tab has what it brought in.")
+        Note(tip, "No AH price: see the AH sales tab")
     elseif view or item.k > 0 then
         local made = view and view.g or item.g
         local profit = made - item.s
@@ -292,7 +311,7 @@ local function ShowProfitTip(row, refresh)
             Line(tip, "Per hour of casting", Signed(profit * 3600 / item.secs))
         end
     else
-        tip:AddLine("No money figures yet: no price, or nothing a vendor buys.", DIM[1], DIM[2], DIM[3], true)
+        tip:AddLine("No money figures: no price or vendor sale", DIM[1], DIM[2], DIM[3], true)
     end
     -- the materials: what the counted crafts really used (each from the oldest purchases first, Bought.lua lots), or, for crafts
     -- counted before lots were kept, the recipe with the price the next unit would be counted at
@@ -300,7 +319,7 @@ local function ShowProfitTip(row, refresh)
     local recipe = char and (F.RecipesOf(char, prof) or {})[item.id]
     if type(item.mats) == "table" and next(item.mats) ~= nil then
         tip:AddLine(" ")
-        tip:AddLine("Materials used (your oldest purchases first)", DIM[1], DIM[2], DIM[3])
+        tip:AddLine("Materials used (oldest purchases first)", DIM[1], DIM[2], DIM[3])
         local ids = {}
         for id in pairs(item.mats) do ids[#ids + 1] = id end
         table.sort(ids)
@@ -316,7 +335,7 @@ local function ShowProfitTip(row, refresh)
         end
     elseif not item.ah and type(recipe) == "table" and type(recipe.r) == "table" and #recipe.r > 0 then
         tip:AddLine(" ")
-        tip:AddLine("Materials per craft (no detail: counted before purchases were kept as lots)", DIM[1], DIM[2], DIM[3], true)
+        tip:AddLine("Materials per craft (no purchase detail)", DIM[1], DIM[2], DIM[3], true)
         for _, reagent in ipairs(recipe.r) do
             local unit, source, units, id = F.Luck.MaterialPrice(reagent)
             local right
@@ -326,7 +345,7 @@ local function ShowProfitTip(row, refresh)
             tip:AddDoubleLine("  " .. (id and ItemLabel(id, tonumber(reagent.qty) or 1) or ("Item " .. tostring(reagent.ids and reagent.ids[1]))), right, 1, 1, 1, 1, 1, 1)
         end
     end
-    if item.u > 0 and item.k > 0 then Note(tip, item.u .. " craft(s) could not be priced: left out.") end
+    if item.u > 0 and item.k > 0 then Note(tip, item.u .. " unpriced crafts left out") end
     W.ShowLines(row, tip, refresh)
 end
 
@@ -880,11 +899,7 @@ local function BuildRow(parent, button)
         end)
         check:SetScript("OnEnter", function(self)
             for _, edge in ipairs(self.edges) do W.Color(edge, { 0.62, 0.62, 0.66 }) end
-            if type(GameTooltip) ~= "table" then return end
-            GameTooltip:SetOwner(self, "ANCHOR_CURSOR_RIGHT")
-            GameTooltip:ClearLines()
-            GameTooltip:AddLine("Sold at the auction house, not to a vendor: leave this item's materials, vendor value and profit out of the totals, so it does not look like a loss. See the AH sales tab for what it brings in.", 1, 1, 1, true)
-            GameTooltip:Show()
+            W.ShowTip(self, TIPS.ah)
         end)
         check:SetScript("OnLeave", function(self)
             for _, edge in ipairs(self.edges) do W.Color(edge, { 0.34, 0.34, 0.37 }) end
@@ -911,15 +926,7 @@ local function BuildRow(parent, button)
         for step = 0, 4 do Bar(del.slashes, 3 + step, 7 - step, 2, 2, { 1, 1, 1 }) end   -- the "/"
         local function Tint(color) for _, bar in ipairs(del.discs) do W.Color(bar, color) end end
         local function Tip(self)
-            if type(GameTooltip) ~= "table" then return end
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:ClearLines()
-            if row.item and armed == row.item.id then
-                GameTooltip:AddLine("Are you sure? Click again to delete this row.", 1, 0.4, 0.4, true)
-            else
-                GameTooltip:AddLine("Deletes this item's row from the list (this scope only). Click twice.", 1, 1, 1, true)
-            end
-            GameTooltip:Show()
+            W.ShowTip(self, TIPS.del(row.item and armed == row.item.id))
         end
         del:SetScript("OnClick", function(self)
             local item = row.item
@@ -948,13 +955,7 @@ local function BuildRow(parent, button)
         edit:SetScript("OnClick", function()
             if row.item and row.item.prof == "auction" then U.OpenEdit(row.item) end
         end)
-        edit:HookScript("OnEnter", function(self)
-            if type(GameTooltip) ~= "table" then return end
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:ClearLines()
-            GameTooltip:AddLine("Add sales you missed (mail looted without the addon) to this item.", 1, 1, 1, true)
-            GameTooltip:Show()
-        end)
+        edit:HookScript("OnEnter", function(self) W.ShowTip(self, TIPS.edit) end)
         edit:HookScript("OnLeave", function() if type(GameTooltip) == "table" then GameTooltip:Hide() end end)
         row.edit = edit
         W.KeepRowTipOff(row, edit)
@@ -1072,11 +1073,7 @@ local function Build()
     back:SetScript("OnClick", function() U.Back() end)
     back:HookScript("OnEnter", function(self)
         Tint(W.GOLD)
-        if type(GameTooltip) ~= "table" then return end
-        GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
-        GameTooltip:ClearLines()
-        GameTooltip:AddLine("Back to Profession Profit", 1, 1, 1, true)
-        GameTooltip:Show()
+        W.ShowTip(self, TIPS.back)
     end)
     back:HookScript("OnLeave", function() Tint(W.TEXT); if type(GameTooltip) == "table" then GameTooltip:Hide() end end)
     frame.back = back
@@ -1109,11 +1106,7 @@ local function Build()
         scope:SetScript("OnEnter", function(self)
             self.hover = true
             PaintScope(self)
-            if type(GameTooltip) ~= "table" then return end
-            GameTooltip:SetOwner(self, "ANCHOR_CURSOR_RIGHT")
-            GameTooltip:ClearLines()
-            GameTooltip:AddLine(F.Luck.SCOPES[spec[1]] .. (spec[1] == "session" and ": since you logged in or reloaded." or ": saved between sessions."), 1, 1, 1, true)
-            GameTooltip:Show()
+            W.ShowTip(self, TIPS[spec[1]])
         end)
         scope:SetScript("OnLeave", function(self)
             self.hover = false
@@ -1127,11 +1120,12 @@ local function Build()
     local reset = W.MakeButton(frame, "Reset session", 96, 20)
     reset:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -(SIDE + 282), -FILTER_Y)   -- (left of the Crafted box; only on the Session scope, Refresh)
     reset:SetScript("OnClick", function() F.Luck.ResetSession(); U.Refresh() end)
+    reset:HookScript("OnEnter", function(self) W.ShowTip(self, TIPS.reset) end)
+    reset:HookScript("OnLeave", function() if type(GameTooltip) == "table" then GameTooltip:Hide() end end)
     frame.reset = reset
     -- AH sales tab: list only what the player crafted, so random sold items do not show. On by default.
     -- The addon's own check box (the same as the main window's), at the right end of the row, right of Reset session.
-    frame.crafted = W.MakeCheck(frame, "Crafted",
-        "Show only items you crafted (the ones the luck counter has seen made). Untick to see every item you sold.", 0, 0,
+    frame.crafted = W.MakeCheck(frame, "Crafted", TIPS.crafted, 0, 0,
         function()
             F.db.salesCrafted = not (F.db.salesCrafted ~= false)
             page = 1
@@ -1158,13 +1152,7 @@ local function Build()
     frame.searchBox:SetScript("OnEscapePressed", function(self)
         if self:GetText() ~= "" then self:SetText("") else self:ClearFocus() end   -- (SetText runs OnTextChanged)
     end)
-    frame.searchBox:SetScript("OnEnter", function(self)
-        if type(GameTooltip) ~= "table" then return end
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:ClearLines()
-        GameTooltip:AddLine("Type part of an item's name to list only those. Escape clears it. The Total row still counts the whole list.", 1, 1, 1, true)
-        GameTooltip:Show()
-    end)
+    frame.searchBox:SetScript("OnEnter", function(self) W.ShowTip(self, TIPS.search) end)
     frame.searchBox:SetScript("OnLeave", function() if type(GameTooltip) == "table" then GameTooltip:Hide() end end)
 
     -- the column headings are buttons: a click sorts by that column (Refresh puts the arrow on the sorted one)
@@ -1362,8 +1350,7 @@ local function BuildEdit()
     e.qty = EditBox(e, 70, true)
     e.qty:SetPoint("TOPLEFT", e, "TOPLEFT", 104, -53)
     e.qty:SetScript("OnTextChanged", function() EditPreview() end)
-    e.market = W.MakeCheck(e, "Current Market Values",
-        "Count the added units at today's Auctionator price, less the 5% cut and with the deposit back (an estimate), instead of typing the money.",
+    e.market = W.MakeCheck(e, "Current Market Values", TIPS.market,
         12, -80, function(self)
             self.mark:SetShown(not self.mark:IsShown())
             EditPreview()

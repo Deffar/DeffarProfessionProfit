@@ -358,7 +358,7 @@ local function Build()
                         ev = { status = "ok", rank = 0, chance = 0, reagents = {}, missing = 0, complete = true, yield = 1,
                             cost = price, value = net, expected = net, baseProfit = profit, profit = profit,
                             margin = price > 0 and profit / price or nil, sellEach = net },
-                        de = { key = c.key, price = price, gross = gross, net = net, searchName = name, age = age } }
+                        de = { key = c.key, price = price, gross = gross, net = net, searchName = name, age = age, level = D.Level(c.id) } }
                 end
             end
         end
@@ -522,6 +522,16 @@ D.OVERRIDES = { [2] = { [4] = { EPIC_56_85 } }, [4] = { [4] = { EPIC_56_85 } } }
 -- The bracket of Auctionator's table an item falls in (its class, quality and item level): { low, high, then triples of
 -- percent, quantity, itemID }, nil when the table, the item or its level is not available. Each triple is one possible
 -- result of a single disenchant and the triples add up to 100%.
+-- The item level of an item (the one the table's brackets are looked up by), nil while its data has not loaded.
+function D.Level(itemID)
+    if not F.Has(C_Item, "GetItemInfo") then return nil end
+    local link = select(2, C_Item.GetItemInfo(itemID))
+    if not F.String(link) then return nil end
+    local levelOf = C_Item.GetDetailedItemLevelInfo or _G.GetDetailedItemLevelInfo
+    local level = type(levelOf) == "function" and levelOf(link) or nil
+    return F.Number(level) and level or nil
+end
+
 function D.Bracket(itemID)
     local auctionator = _G.Auctionator
     local constants = type(auctionator) == "table" and auctionator.Constants or nil

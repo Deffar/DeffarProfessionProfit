@@ -168,7 +168,7 @@ function V.Plan()
                             need[id] = byLimit
                             local items = crafts * (tonumber(reagent.qty) or 1)
                             if not byLimit[limiting] or items > byLimit[limiting].need then
-                                byLimit[limiting] = { need = items, recipe = recipe.name }
+                                byLimit[limiting] = { need = items, recipe = recipe.name, crafts = crafts, out = recipe.out, per = tonumber(reagent.qty) or 1 }
                             end
                             break
                         end
@@ -183,49 +183,167 @@ function V.Plan()
     table.sort(covered, function(a, b) return a.recipe < b.recipe end)
     table.sort(unsized, function(a, b) return a.recipe < b.recipe end)
     local plan = { rows = {}, cost = 0, selected = selected and pool[selected].name or nil, reserve = BagReserve(),
-        blocked = blocked, covered = covered, unsized = unsized }
+        blocked = blocked, covered = covered, unsized = unsized, groups = {} }
     local slotsLeft = FreeSlots()          -- shared by every row: each new stack takes one
     if not slotsLeft then plan.bagUnknown = true end
     local ids = {}
     for id in pairs(need) do ids[#ids + 1] = id end
     table.sort(ids)
+
+    -- The supplies the vendor sells, with what the bags can take of each (partial stacks first, then free slots).
+    local cands, byId = {}, {}
     for _, id in ipairs(ids) do
         local offer = offers[id]
-        local target, recipes = 0, {}
-        for _, entry in pairs(need[id]) do
-            target = target + entry.need
-            recipes[#recipes + 1] = entry.recipe
+        local cand = { id = id, offer = offer, target = 0, have = F.Owned(id), left = F.Owned(id), recipes = {}, bought = 0 }
+        local stack = F.ItemMeta(id).stack
+        if not slotsLeft or not stack then
+            plan.bagUnknown = true   -- (the bag space or the stack size cannot be read: nothing of it is bought, fail closed)
+            plan.unreadable = plan.unreadable or F.ItemMeta(id).name or ("Item " .. id)
+        else
+            cand.stack, cand.room = stack, PartialRoom(id, stack)
+            cands[#cands + 1] = cand
+            byId[id] = cand
         end
-        table.sort(recipes)
-        local have = F.Owned(id)
-        local buy = math.ceil(math.max(0, target - have) / offer.bundle) * offer.bundle   -- whole bundles, enough
-        if offer.stock then buy = math.min(buy, math.floor(offer.stock / offer.bundle) * offer.bundle) end
-        if gold then
-            local affordable = math.floor((gold - plan.cost) / offer.price) * offer.bundle
-            if affordable < buy then buy = math.max(0, affordable); plan.short = true end
+        for _, entry in pairs(need[id]) do cand.target = cand.target + entry.need end
+    end
+
+    -- GROUPS: the recipes limited by the same material share one group (their need of a supply is the larger one, counted once). The
+    -- group with the FEWEST crafts is served first and in full (all its supplies, in step) before the next one gets any: with meat for
+    -- 74 Buzzard Wing and 287 Tiger Meat crafts, the Buzzard Wing supplies come first. Gold and bag room are what is left over.
+    local groups, groupOf = {}, {}
+    for _, id in ipairs(ids) do
+        for limiting, entry in pairs(need[id]) do
+            local group = groupOf[limiting]
+            if not group then
+                group = { limiting = limiting, crafts = entry.crafts, items = {}, recipes = {}, info = {}, dishes = {} }
+                groupOf[limiting] = group
+                groups[#groups + 1] = group
+            end
+            group.crafts = math.min(group.crafts, entry.crafts)
+            group.items[id] = (group.items[id] or 0) + entry.need
+            group.recipes[#group.recipes + 1] = entry.recipe
+            local info = group.info[entry.recipe]   -- the dish: what it is, how many crafts the held material allows, what it takes of each supply
+            if not info then
+                info = { name = entry.recipe, out = entry.out, crafts = entry.crafts, per = {} }
+                group.info[entry.recipe] = info
+                group.dishes[#group.dishes + 1] = info
+            end
+            info.per[id] = entry.per
         end
-        -- Bag space: partial stacks first, then free slots, always leaving `reserve` slots free. When the bag
-        -- space or the item's stack size cannot be read nothing is bought (fail closed).
-        local newSlots = 0
-        if buy > 0 then
-            local stack = F.ItemMeta(id).stack
-            if not slotsLeft or not stack then
-                plan.bagUnknown = true
-                buy = 0
-            else
-                local room = PartialRoom(id, stack)
-                local usable = math.max(0, slotsLeft - plan.reserve)
-                local capacity = math.floor((room + usable * stack) / offer.bundle) * offer.bundle
-                if buy > capacity then buy = capacity; plan.bagShort = true end
-                newSlots = math.ceil(math.max(0, buy - room) / stack)
+    end
+    table.sort(groups, function(a, b)
+        if a.crafts ~= b.crafts then return a.crafts < b.crafts end
+        return a.limiting < b.limiting
+    end)
+
+    local usable = slotsLeft and math.max(0, slotsLeft - plan.reserve) or 0
+    local function Slots(cand, amount) return amount > 0 and math.ceil(math.max(0, amount - cand.room) / cand.stack) or 0 end
+    local function TakenBy(adds)   -- the slots every supply would take with `adds` on top of what is bought already
+        local slots = 0
+        for _, cand in ipairs(cands) do slots = slots + Slots(cand, cand.bought + (adds[cand.id] or 0)) end
+        return slots
+    end
+    local function Fits(adds, spent)
+        local cost = spent
+        for id, amount in pairs(adds) do cost = cost + amount / byId[id].offer.bundle * byId[id].offer.price end
+        return TakenBy(adds) <= usable and (not gold or cost <= gold), cost
+    end
+    local spent = 0
+    for _, group in ipairs(groups) do
+        -- what this group still lacks of each supply, in whole bundles, within what the vendor has left
+        local short, heldUsed = {}, {}
+        for id, wanted in pairs(group.items) do
+            local cand = byId[id]
+            if cand then
+                local held = math.min(cand.left, wanted)
+                heldUsed[id] = held
+                cand.left = cand.left - held
+                local lack = math.ceil((wanted - held) / cand.offer.bundle) * cand.offer.bundle
+                if cand.offer.stock then lack = math.min(lack, math.floor((cand.offer.stock - cand.bought) / cand.offer.bundle) * cand.offer.bundle) end
+                if lack > 0 then short[id] = lack end
             end
         end
-        if buy > 0 then
-            if slotsLeft then slotsLeft = slotsLeft - newSlots end
-            local cost = buy / offer.bundle * offer.price
+        if next(short) then
+            local function Share(fraction)
+                local adds = {}
+                for id, lack in pairs(short) do adds[id] = math.floor(lack * fraction / byId[id].offer.bundle) * byId[id].offer.bundle end
+                return adds
+            end
+            local fits, cost = Fits(Share(1), spent)
+            local share = 1
+            if not fits then
+                if gold and cost > gold then plan.short = true end
+                if TakenBy(Share(1)) > usable then plan.bagShort = true end
+                local low, high = 0, 1
+                for _ = 1, 40 do
+                    local mid = (low + high) / 2
+                    if (Fits(Share(mid), spent)) then low = mid else high = mid end
+                end
+                share = low
+            end
+            local adds = Share(share)
+            -- a bundle that did not fit at the even share goes to whichever supply it still fits, one bundle at a time
+            if share < 1 then
+                local grew = true
+                while grew do
+                    grew = false
+                    for _, id in ipairs(ids) do
+                        local lack = short[id]
+                        local cand = byId[id]
+                        if lack and (adds[id] or 0) + cand.offer.bundle <= lack then
+                            adds[id] = (adds[id] or 0) + cand.offer.bundle
+                            if (Fits(adds, spent)) then grew = true else adds[id] = adds[id] - cand.offer.bundle end
+                        end
+                    end
+                end
+            end
+            local _, now = Fits(adds, spent)
+            spent = now
+            local named = false
+            for id, amount in pairs(adds) do
+                if amount > 0 then byId[id].bought = byId[id].bought + amount; named = true end
+            end
+            if named then
+                for id, amount in pairs(adds) do
+                    if amount > 0 then
+                        for _, name in ipairs(group.recipes) do byId[id].recipes[#byId[id].recipes + 1] = name end
+                    end
+                end
+                -- what this group's purchase is for, as the tooltip shows it: the dishes it makes possible and the supplies bought for them
+                local record = { dishes = {}, rows = {}, cost = 0 }
+                for _, id in ipairs(ids) do
+                    local amount = adds[id]
+                    if amount and amount > 0 then
+                        local cand = byId[id]
+                        local cost = amount / cand.offer.bundle * cand.offer.price
+                        record.cost = record.cost + cost
+                        record.rows[#record.rows + 1] = { id = id, name = F.ItemMeta(id).name or ("Item " .. id), buy = amount, cost = cost }
+                    end
+                end
+                for _, info in ipairs(group.dishes) do
+                    local covered = info.crafts
+                    for id, per in pairs(info.per) do
+                        covered = math.min(covered, math.floor(((heldUsed[id] or 0) + (adds[id] or 0)) / per))
+                    end
+                    if covered > 0 then record.dishes[#record.dishes + 1] = { name = info.name, out = info.out, crafts = covered } end
+                end
+                table.sort(record.dishes, function(a, b) return a.name < b.name end)
+                plan.groups[#plan.groups + 1] = record
+            end
+        end
+    end
+    for _, cand in ipairs(cands) do
+        if cand.bought > 0 then
+            local cost = cand.bought / cand.offer.bundle * cand.offer.price
             plan.cost = plan.cost + cost
-            plan.rows[#plan.rows + 1] = { id = id, name = F.ItemMeta(id).name or ("Item " .. id), index = offer.index,
-                bundle = offer.bundle, price = offer.price, have = have, target = target, buy = buy, cost = cost, ["for"] = recipes }
+            table.sort(cand.recipes)
+            local names, seen = {}, {}
+            for _, name in ipairs(cand.recipes) do
+                if not seen[name] then seen[name] = true; names[#names + 1] = name end
+            end
+            plan.rows[#plan.rows + 1] = { id = cand.id, name = F.ItemMeta(cand.id).name or ("Item " .. cand.id), index = cand.offer.index,
+                bundle = cand.offer.bundle, price = cand.offer.price, have = cand.have, target = cand.target, buy = cand.bought, cost = cost,
+                ["for"] = names }
         end
     end
     return plan
@@ -366,24 +484,40 @@ local function Tip(button)
     local plan = V.Plan()
     GameTooltip:SetOwner(button, "ANCHOR_CURSOR_RIGHT")
     GameTooltip:ClearLines()
+    S.StartRules()
     S.Title(GameTooltip, "Buy materials")
-    if plan and plan.selected then S.Reason(GameTooltip, "For " .. plan.selected) end
     if not plan or #plan.rows == 0 then
+        if plan and plan.selected then S.Reason(GameTooltip, "For " .. plan.selected) end
         local lines = IdleLines(plan)
         for _, line in ipairs(lines) do S.Reason(GameTooltip, line) end
     else
-        --   [icon] Item xN
-        --   cost
-        for index, row in ipairs(plan.rows) do
-            if index > 8 then GameTooltip:AddLine("...", S.DIM[1], S.DIM[2], S.DIM[3]); break end
-            GameTooltip:AddLine(S.ItemQty(row.id, row.name, row.buy, S.SAGE), 1, 1, 1)
-            GameTooltip:AddLine(F.Money(row.cost), 1, 1, 1)
+        --   ____________        a line under the title, then for each dish:
+        --   Craft: [icon] Dish xN   the dish the held material is for, and how many crafts the purchase covers
+        --   Buy: [icon] Supply xY   each supply bought for it
+        --   Cost: 24s42c            what that costs
+        --   ____________            a line before the next dish; the total follows the last one directly
+        S.Rule(GameTooltip)
+        local shown = 0
+        for index, group in ipairs(plan.groups) do
+            if shown >= 8 then GameTooltip:AddLine("...", S.DIM[1], S.DIM[2], S.DIM[3]); break end
+            if index > 1 then S.Rule(GameTooltip) end
+            for _, dish in ipairs(group.dishes) do
+                GameTooltip:AddLine(S.Paint(S.GOLDCODE, "Craft: ") .. S.ItemQty(dish.out, dish.name, dish.crafts, S.SAND), 1, 1, 1)
+            end
+            for _, row in ipairs(group.rows) do
+                shown = shown + 1
+                GameTooltip:AddLine(S.Paint(S.GREEN, "Buy: ") .. S.ItemQty(row.id, row.name, row.buy, S.SAGE), 1, 1, 1)
+            end
+            GameTooltip:AddLine(S.Grey("Cost: ") .. F.Money(group.cost), 1, 1, 1)
         end
+        GameTooltip:AddLine(" ")   -- (an empty line above the total)
         S.Line(GameTooltip, "Total", F.Money(plan.cost))
         if plan.short then S.Reason(GameTooltip, "Limited by your gold.") end
         if plan.bagShort then S.Reason(GameTooltip, "Limited by bag space.") end
+        if plan.bagUnknown then S.Reason(GameTooltip, "Cannot read bag space or stack size" .. (plan.unreadable and (": " .. plan.unreadable) or "") .. ".") end
     end
     GameTooltip:Show()
+    S.FitRules(GameTooltip)   -- (the lines are as wide as the tooltip the other lines made)
 end
 
 -- Creates the button on the merchant window the first time it is needed. The merchant frame's name is the
@@ -397,7 +531,7 @@ function V.EnsureButton()
     end
     local button = F.UI.W.MakeButton(parent, "+", 35, 29)   --
     if F.Has(button.label, "SetFontObject") then button.label:SetFontObject("GameFontNormalLarge") end
-    button:SetPoint("TOPLEFT", parent, "TOPRIGHT", 4, -34)
+    button:SetPoint("BOTTOMLEFT", parent, "BOTTOMRIGHT", 4, 30)   -- outside the merchant window's right edge, near its bottom (the Create All "+" sits at the profession window's bottom right too)
     button.accent = F.UI.W.GOLD
     button.label:SetTextColor(F.UI.W.GOLD[1], F.UI.W.GOLD[2], F.UI.W.GOLD[3])
     button:SetScript("OnClick", function() V.Buy() end)

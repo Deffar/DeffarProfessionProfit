@@ -20,17 +20,20 @@ local COUNT_MIN = 9                            -- the count column: about a char
 local HANDLE_H = 30                          -- the title bar: the drag handle covers it
 local TAB_Y, TAB_H, TAB_W = HANDLE_H, 24, 92
 local TAB_SHIFT = TAB_H + 1
--- The checkbox row (Cooking's Rank button is at its right end) is empty on the Enchanting tab, which has no such boxes: there everything
--- below it moves up by LIFT (SetLift, which also moves the widgets placed at creation).
-local LIFT = 24
-local CHECK_Y = 38 + TAB_SHIFT               -- the checkbox row, from the window's top edge
-local BUDGET0, BUY0, HEAD0, ROWS0 = 62 + TAB_SHIFT, 86 + TAB_SHIFT, 112 + TAB_SHIFT, 130 + TAB_SHIFT
-local BUDGET_Y = BUDGET0                     -- the Budget / Odds row (inputs for the [A] button), from the window's top edge
-local BUY_Y = BUY0                           -- the Buy for / Max row, from the window's top edge
-local HEAD_Y = HEAD0                         -- the column headings
-local ROWS_Y = ROWS0                         -- first row
-local FOOT_Y = ROWS_Y + PAGE * (ROW_H + ROW_GAP) + 4
-local lift = 0                               -- how far the body is lifted now (0 or LIFT)
+-- The toolbar under the tabs: rows of controls (BarSpec), each led by a caption naming its group, laid out left to right by PlaceBar
+-- (no coordinates of their own). The rows and everything under them sit lower the more rows the tab has: SetBarRows.
+local ROW_PITCH = 24
+local CHECK_Y = 38 + TAB_SHIFT               -- the first toolbar row, from the window's top edge
+local BUDGET_Y, BUY_Y = 62 + TAB_SHIFT, 86 + TAB_SHIFT   -- (where the controls are first created; PlaceBar moves them)
+local HEAD_Y, ROWS_Y, FOOT_Y                 -- the column headings, the first row, the footer: SetBarRows
+local barRows = 0
+local function SetBarRows(n)
+    barRows = n
+    HEAD_Y = CHECK_Y + (n - 1) * ROW_PITCH + 26
+    ROWS_Y = HEAD_Y + 18
+    FOOT_Y = ROWS_Y + PAGE * (ROW_H + ROW_GAP) + 4
+end
+SetBarRows(3)
 
 local GOLD, TEXT, GREY = {1, 0.82, 0}, {0.90, 0.90, 0.92}, {0.70, 0.70, 0.73}
 local GREEN, RED, ORANGE = {0.35, 0.90, 0.35}, {1, 0.40, 0.40}, {1, 0.65, 0.20}
@@ -43,6 +46,7 @@ local UNKNOWN_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
 
 -- Columns after the name, left to right. `sort` is the key a click on the heading sorts by.
 local COLS = {
+    { key = "level",  head = "Level",     sort = "level" },     -- the Enchanting tab only: the item's level
     { key = "mats",   head = "Materials", sort = "mats" },
     { key = "vendor", head = "Vendor",    sort = "vendor" },
     { key = "ah",     head = "AH",        sort = "ah", optional = true },
@@ -251,6 +255,37 @@ local function PaintCheck(box)
     for _, edge in ipairs(box.edges) do Color(edge, border) end
 end
 
+-- The hover text of a toolbar control, in the shared look (Style.lua): a spec { "Title", { "grey label", "figure" }, ...,
+-- { text = "a line", color = {r, g, b} }, { hint = "Click: ..." } } (or a function returning one), or a plain string (old style, white).
+local function ShowControlTip(owner, tip)
+    if type(GameTooltip) ~= "table" or not tip then return end
+    if type(tip) == "function" then tip = tip() end
+    local St = F.Style
+    GameTooltip:SetOwner(owner, "ANCHOR_CURSOR_RIGHT")
+    GameTooltip:ClearLines()
+    if type(tip) == "string" then
+        GameTooltip:AddLine(tip, 1, 1, 1, true)
+    else
+        St.Title(GameTooltip, tip[1])
+        for index = 2, #tip do
+            local row = tip[index]
+            if row.hint then
+                St.Hint(GameTooltip, row.hint)
+            elseif row.text then
+                local c = row.color or { 1, 1, 1 }
+                GameTooltip:AddLine(row.text, c[1], c[2], c[3], true)
+            else
+                St.Line(GameTooltip, row[1], row[2])
+            end
+        end
+    end
+    GameTooltip:Show()
+end
+
+local TIPS = {}
+U.TIPS, U.ShowTip = TIPS, ShowControlTip   -- (Build reaches them through U: it is at the limit of upvalues a Lua function may have)
+-- the toolbar controls' hover specs, by control (filled in below, read when the pointer is over the control)
+
 local function MakeCheck(parent, label, tip, x, y, onClick)
     local box = CreateFrame("Button", nil, parent)
     box:SetSize(140, 18)
@@ -268,12 +303,7 @@ local function MakeCheck(parent, label, tip, x, y, onClick)
     box.label:SetText(label)
     box:SetScript("OnEnter", function(self)
         self.hover = true; PaintCheck(self)
-        if type(GameTooltip) == "table" and tip then
-            GameTooltip:SetOwner(self, "ANCHOR_CURSOR_RIGHT")
-            GameTooltip:ClearLines()
-            GameTooltip:AddLine(type(tip) == "function" and tip() or tip, 1, 1, 1, true)
-            GameTooltip:Show()
-        end
+        ShowControlTip(self, tip)
     end)
     box:SetScript("OnLeave", function(self)
         self.hover = false; PaintCheck(self)
@@ -324,6 +354,7 @@ local function SortKey(row, key)
     if key == "hour" then return ev.perHour end
     if key == "margin" then return ev.margin end
     if key == "odds" then return row.de and row.de.odds or nil end
+    if key == "level" then return row.de and row.de.level or nil end
     if key == "rank" then
         if ev.needRank == nil then return nil end
         return ev.needRank == -1 and 99 or ev.needRank
@@ -335,7 +366,7 @@ local function Arrange(list)
     local db = F.db
     local key, desc = db.sort or "profit", db.sortDesc ~= false
     if key == "rank" and not state.proc then key = "profit" end   -- the rank column only exists where there is a rank
-    if key == "odds" and not state.de then key = "profit" end
+    if (key == "odds" or key == "level") and not state.de then key = "profit" end
     if key == "hour" and state.de then key = "profit" end        -- and nothing is crafted on the Enchanting tab
     table.sort(list, function(a, b)
         local x, y = SortKey(a, key), SortKey(b, key)
@@ -388,6 +419,7 @@ local function Cells(d, rank)
     if state.de or SellAH() or SellDE() then other = d.vendorValue else other = d.ahValue end
     cells.ah = other and { F.Money(other), TEXT } or { "-", GREY }
 
+    if d.de then cells.level = d.de.level and { tostring(math.floor(d.de.level)), GREY } or { "-", GREY } end
     if d.de and d.de.odds then
         local odds = d.de.odds
         cells.odds = { string.format("%d%%", math.floor(odds + 0.5)), odds >= 70 and GREEN or (odds >= 35 and ORANGE or RED) }
@@ -460,7 +492,7 @@ local nameX = SIDE + 3 + ABTN + 4 + ICON + 3 + COUNT_MIN + 3   -- where the reci
 local function ActiveColumns()
     local list = {}
     for _, col in ipairs(COLS) do
-        if (not col.optional or (F.db and F.db.showAH == true and not state.de)) and (col.key ~= "rank" or state.proc) and (col.key ~= "odds" or state.de) and not (state.de and col.key == "hour") then list[#list + 1] = col end
+        if (not col.optional or (F.db and F.db.showAH == true and not state.de)) and (col.key ~= "rank" or state.proc) and (col.key ~= "odds" or state.de) and (col.key ~= "level" or state.de) and not (state.de and col.key == "hour") then list[#list + 1] = col end
     end
     return list
 end
@@ -1146,40 +1178,78 @@ function U.UpdateScanText()
     end
 end
 
--- Moves the body of the window (everything under the rank band) up by `target`, or back down. The positions that are worked out on every
--- redraw (rows, headings, footer) read the heights above; the widgets anchored once at creation are moved here, by reading their
--- anchors, so no creation site has to know about the lift.
-local function SetLift(target)
-    if target == lift or not frame then return end
-    local d = target - lift
-    lift = target
-    BUDGET_Y, BUY_Y, HEAD_Y, ROWS_Y = BUDGET0 - lift, BUY0 - lift, HEAD0 - lift, ROWS0 - lift
-    FOOT_Y = ROWS_Y + PAGE * (ROW_H + ROW_GAP) + 4
-    state.sig = nil   -- (the list is laid out again: its headings are anchored there)
-    local top = -(TAB_Y + TAB_H + 2)   -- below the tab row
-    local function Shift(widget)
-        if type(widget.GetNumPoints) ~= "function" then return end
-        local n = widget:GetNumPoints()
-        if type(n) ~= "number" or n == 0 then return end
-        -- lifting: what sits below the tab row, marked as lifted; lowering: exactly what was marked (a lifted widget sits near the tabs,
-        -- so its place says nothing)
-        local points, move = {}, false
-        for i = 1, n do
-            local point, relative, relativePoint, x, y = widget:GetPoint(i)
-            points[i] = { point, relative, relativePoint, x, y }
-            if d > 0 and relative == frame and type(y) == "number" and y <= top and not widget.liftMark then move = true end
-        end
-        if d < 0 then move = widget.liftMark == true end
-        if not move then return end
-        widget.liftMark = d > 0 or nil
-        widget:ClearAllPoints()
-        for _, p in ipairs(points) do
-            if p[2] == frame and type(p[5]) == "number" and (d < 0 or p[5] <= top) then p[5] = p[5] + d end
-            widget:SetPoint(p[1], p[2], p[3], p[4], p[5])
-        end
+
+-- What each toolbar control says on hover: short labelled lines, figures coloured by meaning (a percent teal, a loss red, "free" green,
+-- an unlearned recipe's earthy red), clicks in the hint blue.
+local function AHCut() return F.Style.Percent(math.floor(F.AH_CUT * 100 + 0.5) .. "%") end
+
+function TIPS.profitOnly()
+    local St = F.Style
+    local tip = { "Profitable only", { "Hides", St.Paint(St.RED, "recipes at a loss") } }
+    if state.proc then tip[#tip + 1] = { "Profit counts", "Master Chef extras (Rank)" } end
+    return tip
+end
+function TIPS.ownedFree()
+    return { "Owned mats free", { "Mats you hold", F.Style.Paint(F.Style.GREEN, "free") }, { "Needs", "enough for 1 craft" } }
+end
+function TIPS.showAH()
+    if (F.db and F.db.sellAH == true) or F.SellDE() then return { "Vendor column", { "Adds", "vendor price" } } end
+    return { "AH column", { "Adds", "AH price (last scan)" } }
+end
+function TIPS.sellAH()
+    return { "Sell at AH", { "Values by", "AH price" }, { "Minus", AHCut() .. " cut" }, { "Replaces", "vendor price" } }
+end
+function TIPS.sellDE()
+    return { "Disenchant", { "Values by", "dust and essences" }, { "Minus", AHCut() .. " cut" }, { "Only", "uncommon+ gear" }, { "Needs", "Enchanting" } }
+end
+function TIPS.known()
+    local St = F.Style
+    return { "Known recipes", { "Ticked", "learned only" }, { "Unticked", "all, unlearned " .. St.Paint(St.RUSTCODE, "in red") } }
+end
+function TIPS.max()
+    return { "Max", { "Buys", "as many as the budget allows" }, { "Untick", "to type a number" } }
+end
+function TIPS.budget()
+    return { "Budget", { "[A] spends", "at most this, in gold" }, { "Empty", "all gold held" } }
+end
+function TIPS.odds()
+    local St = F.Style
+    return { "Confidence", { "[A] price limits", "aim to beat break-even" }, { "Chance", St.Percent("50-99%") }, { "Higher", "lower prices" } }
+end
+function TIPS.margin()
+    local St = F.Style
+    if state.de then
+        return { "Min return", { "Lists", "items returning this or more" }, { "Range", St.Percent("0-100%") }, { "Also", "caps [A]'s price" } }
     end
-    for _, child in ipairs({ frame:GetChildren() }) do Shift(child) end
-    for _, region in ipairs({ frame:GetRegions() }) do Shift(region) end
+    return { "Min margin", { "[A] price limits", "leave this profit" }, { "Range", St.Percent("0-100%") }, { "Used", "the lower of this and Confidence" } }
+end
+function TIPS.buy()
+    return { "Buy for", { "[A] buys", "this many crafts" }, { "Empty", "Max" }, { "Capped by", "budget, price limits" } }
+end
+function TIPS.minProfit()
+    return { "Min profit", { "Lists", "items earning this or more" }, { "0 and 0", "everything that pays" } }
+end
+function TIPS.minOdds()
+    return { "Min odds", { "Lists", "items whose 1 disenchant pays" }, { "Range", F.Style.Percent("0-100%") }, { "0", "off" } }
+end
+function TIPS.maxAge()
+    return { "Max age", { "Price age", "0 today, 1 + yesterday" }, { "Older", F.Style.Paint(F.Style.RED, "never listed") } }
+end
+function TIPS.quality()
+    return { "Quality", { "Shows", "one quality" }, { "Then", "Level names its results" } }
+end
+function TIPS.level()
+    return { "Level", { "Shows", "one item level range" }, { "Pick a quality", "to see its results" } }
+end
+function TIPS.search()
+    return { "Search", { "Matches", "part of a name" }, { "Esc", "clears" } }
+end
+function TIPS.rank()
+    local c = frame and frame.rankColor or TEXT
+    local tip = { "Master Chef rank" }
+    if frame and F.String(frame.rankLine) and frame.rankLine ~= "" then tip[#tip + 1] = { text = frame.rankLine, color = c } end
+    tip[#tip + 1] = { hint = "Click: Auto, then 0-5" }
+    return tip
 end
 
 -- The Enchanting tab's level dropdown. One entry per item level range of Auctionator's disenchant table (Disenchant.lua D.Bracket:
@@ -1249,7 +1319,13 @@ function U.Refresh()
     local list, info = F.BuildRows(tab)
     state.proc = info.proc
     state.de = info.disenchant == true
-    SetLift(state.de and LIFT or 0)   -- (the Enchanting tab has no checkbox row)
+    local spec = U.BarSpec(tab)
+    if #spec ~= barRows then   -- (another number of toolbar rows: everything under them moves)
+        SetBarRows(#spec)
+        state.sig = nil
+        frame.empty:ClearAllPoints()
+        frame.empty:SetPoint("TOP", frame, "TOP", 0, -(ROWS_Y + 50))
+    end
     state.all = state.de and list or nil   -- (every item worked out, for the level dropdown's entries)
     for key, button in pairs(frame.tabs) do
         button.selected = key == tab
@@ -1341,48 +1417,24 @@ function U.Refresh()
 
     if not frame.budgetBox.focused then
         frame.budgetBox:SetText(db.budget and tostring(db.budget) or "")
-        frame.budgetHint:SetShown(db.budget == nil)
     end
     if not frame.oddsBox.focused then frame.oddsBox:SetText(tostring(F.Integer(db.odds, 50, 99) and db.odds or 90)) end
     if not frame.marginBox.focused then frame.marginBox:SetText(tostring(F.Integer(db.margin, 0, 100) and db.margin or 10)) end
     if not frame.buyBox.focused then frame.buyBox:SetText(db.buyCrafts and tostring(db.buyCrafts) or "") end
     frame.maxCheck.mark:SetShown(db.buyCrafts == nil)
-    frame.profitOnly.mark:SetShown(not state.de and db.profitOnly == true)   -- (the Enchanting tab has no such box: its filters always apply)
+    frame.profitOnly.mark:SetShown(db.profitOnly == true)
     frame.ownedFree.mark:SetShown(db.ownedFree == true)
     frame.showAH.mark:SetShown(db.showAH == true)
     frame.sellAH.mark:SetShown(db.sellAH == true)
     frame.sellDE.mark:SetShown(db.sellDE == true)
-    frame.known:SetShown(not state.de and F.Catalog.Has(tab))   -- (only a profession with a catalog)
     frame.known.mark:SetShown(db.showUnlearned ~= true)
     frame.showAH.label:SetText((db.sellAH == true or F.SellDE()) and "Vendor column" or "AH column")
-    -- The Enchanting tab has no recipes, materials, budget, odds or crafts to buy for, and its gear sells to a vendor for 1c: those
-    -- controls are hidden there and the Margin box moves left, with a Min profit box beside it
-    for _, widget in ipairs(frame.recipeOnly) do widget:SetShown(not state.de) end
-    frame.budgetHint:SetShown(not state.de and db.budget == nil)
-    frame.sellDE:SetShown(not state.de and (F.PROFESSIONS[tab] or {}).gear == true and F.ProfessionKnown("enchanting"))   -- (only a character with Enchanting can disenchant, and only gear: not Cooking's food)
-    frame.minLabel:SetShown(state.de)
-    frame.minBox:SetShown(state.de)
-    frame.minCoin:SetShown(state.de)
-    frame.minCopperBox:SetShown(state.de)
-    frame.minCopperCoin:SetShown(state.de)
-    frame.minOddsLabel:SetShown(state.de)
-    frame.minOddsBox:SetShown(state.de)
-    frame.minOddsPercent:SetShown(state.de)
-    frame.maxAgeLabel:SetShown(state.de)
-    frame.maxAgeBox:SetShown(state.de)
-    frame.maxAgeUnit:SetShown(state.de)
-    for _, widget in ipairs(frame.deOnly) do widget:SetShown(state.de) end
-    if not state.de then frame.qualityButton.popup:Hide(); frame.levelButton.popup:Hide() end
+    frame.marginLabel:SetText(state.de and "Min return:" or "Min margin:")
     frame.qualityButton.label:SetText(QualityText(state.deQuality))
     frame.levelButton.label:SetText(state.deRange and ("Level " .. state.deRange) or "All levels")
-    frame.marginLabel:SetText(state.de and "Min return:" or "Margin:")
-    if state.controlsDe ~= state.de then
-        state.controlsDe = state.de
-        frame.marginLabel:ClearAllPoints()
-        frame.marginLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE + 6 + (state.de and 0 or 344), -(BUDGET_Y + 3))
-        frame.marginBox:ClearAllPoints()
-        frame.marginBox:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE + 6 + (state.de and 66 or 392), -BUDGET_Y)
-    end
+    U.PlaceBar(spec)
+    frame.budgetHint:SetShown(frame.ctl.budget.shown and db.budget == nil)
+    if not state.de then frame.qualityButton.popup:Hide(); frame.levelButton.popup:Hide() end
     local minProfit = (F.Number(db.minProfitCopper) and db.minProfitCopper >= 0) and db.minProfitCopper or 100
     if not frame.minBox.focused then frame.minBox:SetText(tostring(math.floor(minProfit / 100))) end
     if not frame.minCopperBox.focused then frame.minCopperBox:SetText(tostring(minProfit % 100)) end
@@ -1509,7 +1561,10 @@ function ShowTip(row, refresh)
         local source = F.Catalog.SourceLine(d.recipe)
         if source then tip:AddLine(source) end
         local bind = F.Catalog.Bind(d.recipe)   -- BoP or BoE, so a drop is not a surprise
-        if bind then tip:AddLine(bind, St.DIM[1], St.DIM[2], St.DIM[3]) end
+        if bind then   -- earthy green: Binds on Equip (can be bought from a player), earthy red: Binds on Pickup (the hard one); other: grey
+            local code = (bind == "Binds on Equip" and St.MOSSCODE) or (bind == "Binds on Pickup" and St.RUSTCODE) or St.GREYTEXT
+            tip:AddLine(St.Paint(code, bind), 1, 1, 1)
+        end
     end
     St.Line(tip, "Makes", St.Count(ev.yield == math.floor(ev.yield) and tostring(ev.yield) or string.format("%.1f", ev.yield))
         .. (d.item.id and (" x " .. St.ItemLabel(d.item.id)) or ""))
@@ -1710,13 +1765,7 @@ local function BuildDropdowns()
         button:SetScript("OnClick", function()
             if popup:IsShown() then popup:Hide() else button.Open() end
         end)
-        button:HookScript("OnEnter", function(self)
-            if type(GameTooltip) ~= "table" then return end
-            GameTooltip:SetOwner(self, "ANCHOR_CURSOR_RIGHT")
-            GameTooltip:ClearLines()
-            GameTooltip:AddLine(tip, 1, 1, 1, true)
-            GameTooltip:Show()
-        end)
+        button:HookScript("OnEnter", function(self) ShowControlTip(self, tip) end)
         button:HookScript("OnLeave", function() if type(GameTooltip) == "table" then GameTooltip:Hide() end end)
         frame:HookScript("OnHide", function() popup:Hide() end)
         return button
@@ -1733,7 +1782,7 @@ local function BuildDropdowns()
         state.deRange = nil   -- (the ranges are the quality's own)
         state.page = 1
         U.Refresh()
-    end, "Show only items of one quality. It also names what each item level range disenchants into.")
+    end, TIPS.quality)
     frame.levelLabel = Text(frame, nil, GREY)
     frame.levelLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE + 6 + 52 + 92 + 10, -(BUY_Y + 3))
     frame.levelLabel:SetText("Level:")
@@ -1747,8 +1796,166 @@ local function BuildDropdowns()
         state.deRange = value or nil
         state.page = 1
         U.Refresh()
-    end, "Show only items in one item level range of the disenchant table. Pick a quality first to see what each range gives.")
+    end, TIPS.level)
     frame.deOnly = { frame.qualityLabel, frame.qualityButton, frame.levelLabel, frame.levelButton }
+end
+
+---------------------------------------------------------------------------
+-- The toolbar. Controls are grouped in rows under a caption (View / Value / Shopping, or View / Filters on the Enchanting tab) and laid
+-- out left to right by their own width, so nothing has a coordinate of its own and nothing can overlap; a right-aligned control (Search,
+-- Rank) is anchored to the window's right edge. Every control is made once (Build); BarSpec says which ones the tab in use shows.
+---------------------------------------------------------------------------
+
+local CAPTION_W, BAR_GAP = 58, 12
+
+function U.BarSpec(tab)
+    local def = F.PROFESSIONS[tab] or {}
+    if def.disenchant then
+        return {
+            { cap = "View", left = { "quality", "level" }, right = { "search" } },
+            { cap = "Filters", left = { "margin", "minProfit", "minOdds", "maxAge" } },
+        }
+    end
+    return {
+        { cap = "View", left = { "profitOnly", "known" }, right = { "search" } },
+        { cap = "Value", left = { "ownedFree", "showAH", "sellAH", "sellDE" }, right = { "rank" } },
+        { cap = "Shopping", left = { "budget", "odds", "margin", "buy", "max" } },
+    }
+end
+
+local function PartWidth(part)
+    if part.text then
+        local width = part.w:GetStringWidth()
+        return F.Number(width) and width or 0
+    end
+    local width = part.w:GetWidth()
+    return F.Number(width) and width or 0
+end
+
+-- `parts`: { { w = widget, text = true when it is a label, gap = px after the previous part }, ... } in reading order. Each part after
+-- the first is anchored to the one before, so the control is as wide as its parts and moves as one. `side = "right"` anchors the last
+-- part to the window's right edge and the others leftwards of it.
+local function MakeControl(name, parts, options)
+    options = options or {}
+    local ctl = { name = name, parts = parts, side = options.side, show = options.show, fit = options.fit }
+    if ctl.side == "right" then
+        for index = #parts - 1, 1, -1 do
+            parts[index].w:ClearAllPoints()
+            parts[index].w:SetPoint("RIGHT", parts[index + 1].w, "LEFT", -(parts[index + 1].gap or 4), 0)
+        end
+        ctl.root = parts[#parts].w
+    else
+        for index = 2, #parts do
+            parts[index].w:ClearAllPoints()
+            parts[index].w:SetPoint("LEFT", parts[index - 1].w, "RIGHT", parts[index].gap or 4, 0)
+        end
+        ctl.root = parts[1].w
+    end
+    function ctl.width()
+        if ctl.fit then ctl.fit() end
+        local total = 0
+        for index, part in ipairs(parts) do total = total + PartWidth(part) + (index > 1 and (part.gap or 4) or 0) end
+        return total
+    end
+    function ctl.Show(on)
+        ctl.shown = on
+        for _, part in ipairs(parts) do part.w:SetShown(on) end
+    end
+    frame.ctl[name] = ctl
+    return ctl
+end
+
+local function CheckControl(name, box, options)
+    options = options or {}
+    options.fit = function()
+        local width = box.label:GetStringWidth()
+        box:SetWidth(20 + (F.Number(width) and width or 0) + 4)
+    end
+    return MakeControl(name, { { w = box } }, options)
+end
+
+local function Field(label, box, tail)
+    local parts = { { w = label, text = true }, { w = box, gap = 4 } }
+    if tail then parts[#parts + 1] = { w = tail.w, text = tail.text, gap = tail.gap or 3 } end
+    return parts
+end
+
+-- Makes the controls of the toolbar from the widgets Build created (the widgets keep their own look and scripts).
+local function BuildBar(p)
+    frame.ctl = {}
+    frame.captions = {}
+    for index = 1, 3 do
+        frame.captions[index] = Text(frame, nil, GREY)
+    end
+    CheckControl("profitOnly", frame.profitOnly)
+    CheckControl("known", frame.known, { show = function() return F.Catalog.Has(F.Tab()) end })
+    CheckControl("ownedFree", frame.ownedFree)
+    CheckControl("showAH", frame.showAH)
+    CheckControl("sellAH", frame.sellAH)
+    CheckControl("sellDE", frame.sellDE, { show = function()
+        return (F.PROFESSIONS[F.Tab()] or {}).gear == true and F.ProfessionKnown("enchanting")   -- (only a character with Enchanting can disenchant, and only gear)
+    end })
+    CheckControl("max", frame.maxCheck)
+    MakeControl("rank", { { w = frame.rankButton } }, { side = "right", show = function() return state.proc end })
+    MakeControl("search", { { w = frame.searchLabel, text = true }, { w = frame.searchBox, gap = 6 } }, { side = "right" })
+    MakeControl("budget", Field(p.budgetLabel, frame.budgetBox, { w = p.coin }))
+    MakeControl("odds", Field(p.oddsLabel, frame.oddsBox, { w = p.oddsPercent, text = true }))
+    MakeControl("margin", Field(frame.marginLabel, frame.marginBox, { w = p.marginPercent, text = true }))
+    MakeControl("buy", Field(p.buyLabel, frame.buyBox))
+    MakeControl("quality", Field(frame.qualityLabel, frame.qualityButton))
+    MakeControl("level", Field(frame.levelLabel, frame.levelButton))
+    MakeControl("minProfit", { { w = frame.minLabel, text = true }, { w = frame.minBox, gap = 4 }, { w = frame.minCoin, gap = 3 },
+        { w = frame.minCopperBox, gap = 4 }, { w = frame.minCopperCoin, gap = 3 } })
+    MakeControl("minOdds", Field(frame.minOddsLabel, frame.minOddsBox, { w = frame.minOddsPercent, text = true }))
+    MakeControl("maxAge", Field(frame.maxAgeLabel, frame.maxAgeBox, { w = frame.maxAgeUnit, text = true }))
+    p.buyUnit:Hide()   -- ("crafts" after the Buy for box: its tooltip says it)
+    frame.budgetHint:ClearAllPoints()   -- "all gold", inside the empty Budget box
+    frame.budgetHint:SetPoint("RIGHT", frame.budgetBox, "RIGHT", -6, 0)
+    frame.budgetHint:SetText("all gold")
+end
+
+local function PlaceControl(ctl, point, x, y)
+    local root = ctl.root
+    if root.barPoint ~= point or root.barX ~= x or root.barY ~= y then
+        root.barPoint, root.barX, root.barY = point, x, y
+        root:ClearAllPoints()
+        if point == "LEFT" then
+            root:SetPoint("LEFT", frame, "TOPLEFT", x, -(y + 9))
+        else
+            root:SetPoint("RIGHT", frame, "TOPRIGHT", -SIDE, -(y + 9))
+        end
+    end
+end
+
+-- Puts the controls of `spec` (U.BarSpec) in their rows; every other control is hidden.
+function U.PlaceBar(spec)
+    local active = {}
+    for index, row in ipairs(spec) do
+        local y = CHECK_Y + (index - 1) * ROW_PITCH
+        local caption = frame.captions[index]
+        caption:SetText(row.cap)
+        caption:ClearAllPoints()
+        caption:SetPoint("LEFT", frame, "TOPLEFT", SIDE + 6, -(y + 9))
+        caption:Show()
+        local x = SIDE + 6 + CAPTION_W
+        for _, name in ipairs(row.left) do
+            local ctl = frame.ctl[name]
+            if ctl and (not ctl.show or ctl.show()) then
+                active[name] = true
+                PlaceControl(ctl, "LEFT", x, y)
+                x = x + ctl.width() + BAR_GAP
+            end
+        end
+        for _, name in ipairs(row.right or {}) do
+            local ctl = frame.ctl[name]
+            if ctl and (not ctl.show or ctl.show()) then
+                active[name] = true
+                PlaceControl(ctl, "RIGHT", 0, y)
+            end
+        end
+    end
+    for index = #spec + 1, #frame.captions do frame.captions[index]:Hide() end
+    for name, ctl in pairs(frame.ctl) do ctl.Show(active[name] == true) end
 end
 
 local function Build()
@@ -1807,41 +2014,24 @@ local function Build()
 
     -- Cooking's Rank button: the right end of the checkbox row. No line of text says the rank: its tooltip does.
     frame.rankButton = MakeButton(frame, "Rank: Auto", 104, 20)
-    frame.rankButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -SIDE, -(CHECK_Y - 1))
-    frame.rankButton:SetScript("OnClick", CycleRank)
-    frame.rankButton:HookScript("OnEnter", function(self)
-        if type(GameTooltip) ~= "table" then return end
-        GameTooltip:SetOwner(self, "ANCHOR_CURSOR_RIGHT")
-        GameTooltip:ClearLines()
-        if F.String(frame.rankLine) and frame.rankLine ~= "" then
-            local c = frame.rankColor or TEXT
-            GameTooltip:AddLine(frame.rankLine, c[1], c[2], c[3], true)
-        end
-        GameTooltip:AddLine("Master Chef rank used for the numbers. Auto reads it from the game; click to set 0-5 by hand (for example to see what a higher rank would do), and again past 5 to return to Auto.", 1, 1, 1, true)
-        GameTooltip:Show()
-    end)
+        frame.rankButton:SetScript("OnClick", CycleRank)
+    frame.rankButton:HookScript("OnEnter", function(self) U.ShowTip(self, U.TIPS.rank) end)
     frame.rankButton:HookScript("OnLeave", function() if type(GameTooltip) == "table" then GameTooltip:Hide() end end)
 
-    frame.profitOnly = MakeCheck(frame, "Profitable only",
-        function()
-            return "Hide recipes that lose money at the rank in use."
-        end, SIDE + 6, -CHECK_Y,
+    frame.profitOnly = MakeCheck(frame, "Profitable only", U.TIPS.profitOnly, SIDE + 6, -CHECK_Y,
         function() Toggle("profitOnly") end)
-    frame.ownedFree = MakeCheck(frame, "Owned mats free", "Count a material you already hold enough of for one craft as free, instead of at its auction or vendor price.",
+    frame.ownedFree = MakeCheck(frame, "Owned mats free", U.TIPS.ownedFree,
         SIDE + 6 + 124, -CHECK_Y, function() Toggle("ownedFree") end)
-    frame.showAH = MakeCheck(frame, "AH column", "Show the other sale price next to the profit, for comparison: the Auctionator price (last scan) when selling to a vendor, the vendor price when selling at the AH.",
+    frame.showAH = MakeCheck(frame, "AH column", U.TIPS.showAH,
         SIDE + 6 + 248, -CHECK_Y, function() Toggle("showAH") end)
-    frame.sellAH = MakeCheck(frame, "Sell at AH", "Work out profit, margin, per hour and the colours from the Auctionator price less the 5% auction house cut, instead of the vendor price.",
+    frame.sellAH = MakeCheck(frame, "Sell at AH", U.TIPS.sellAH,
         SIDE + 6 + 372, -CHECK_Y, function() Toggle("sellAH") end)
     -- the same profit from DISENCHANTING the result instead (Tailoring crafts: cloth gear): only when the character has Enchanting
-    frame.sellDE = MakeCheck(frame, "Disenchant", "Work out profit, margin, per hour and the colours from what the finished piece disenchants into (Auctionator prices of the dust and essences, less the 5% auction house cut), instead of the vendor price. Needs Enchanting; only weapons and armour of uncommon or better quality can be disenchanted.",
+    frame.sellDE = MakeCheck(frame, "Disenchant", U.TIPS.sellDE,
         SIDE + 6 + 496, -CHECK_Y, function() Toggle("sellDE") end)
     -- on the Budget row, at the right: unticked, the profession's recipes the character has not learned are listed too (Catalog.lua)
-    frame.known = MakeCheck(frame, "Known recipes", "Ticked: only the recipes this character has learned. Unticked: every recipe of the profession that can be obtained in the game, learned or not (in an earthy red), to see what a recipe would pay before learning it.",
+    frame.known = MakeCheck(frame, "Known recipes", U.TIPS.known,
         0, 0, function() Toggle("showUnlearned") end)
-    frame.known:ClearAllPoints()
-    frame.known:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -SIDE, -BUDGET_Y)   -- (the row of the Budget box: the checkbox row above is full when the character also has Enchanting and its Disenchant box takes the right end)
-    for _, box in ipairs({ frame.profitOnly, frame.ownedFree, frame.showAH, frame.sellAH, frame.sellDE, frame.known }) do box:SetSize(122, 18) end   -- (side by side, 124 apart)
 
     -- Budget and odds for the [A] button (Shopping.lua): flat one-line number boxes. `commit(text)` runs when
     -- Enter is pressed or the box loses focus; Escape puts the saved value back.
@@ -1869,26 +2059,20 @@ local function Build()
         box:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
         box:SetScript("OnEscapePressed", function(self) self:SetText(current()); self:ClearFocus() end)
         box:SetScript("OnTextChanged", function(self) if frame.budgetHint then frame.budgetHint:SetShown(not state.de and frame.budgetBox:GetText() == "") end end)
-        box:SetScript("OnEnter", function(self)
-            if type(GameTooltip) ~= "table" then return end
-            GameTooltip:SetOwner(self, "ANCHOR_CURSOR_RIGHT")
-            GameTooltip:ClearLines()
-            GameTooltip:AddLine(type(tip) == "function" and tip() or tip, 1, 1, 1, true)
-            GameTooltip:Show()
-        end)
+        box:SetScript("OnEnter", function(self) U.ShowTip(self, tip) end)
         box:SetScript("OnLeave", function() if type(GameTooltip) == "table" then GameTooltip:Hide() end end)
         return box
     end
     local label = Text(frame, nil, GREY)
     label:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE + 6, -(BUDGET_Y + 3))
     label:SetText("Budget:")
-    frame.budgetBox = MakeInput(SIDE + 6 + 50, 70, 8,
+    frame.budgetBox = MakeInput(SIDE + 6 + 50, 60, 8,
         function() return F.db.budget and tostring(F.db.budget) or "" end,
         function(text)
             local number = tonumber(text)
             F.db.budget = (number and number >= 1) and math.floor(number) or nil
         end,
-        "The most an [A] shopping list may cost, in gold. Leave it empty to use all the gold you hold. Either way the prices are capped so the list stays within the margin.")
+        U.TIPS.budget)
     local coin = frame:CreateTexture(nil, "ARTWORK")
     coin:SetSize(12, 12)
     coin:SetPoint("LEFT", frame.budgetBox, "RIGHT", 4, 0)
@@ -1898,39 +2082,34 @@ local function Build()
     frame.budgetHint:SetText("empty = all gold")
     local oddsLabel = Text(frame, nil, GREY)
     oddsLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE + 6 + 250, -(BUDGET_Y + 3))
-    oddsLabel:SetText("Odds:")
+    oddsLabel:SetText("Confidence:")
     frame.oddsBox = MakeInput(SIDE + 6 + 250 + 38, 34, 2,
         function() return tostring(F.Integer(F.db.odds, 50, 99) and F.db.odds or 90) end,
         function(text)
             local number = tonumber(text)
             if F.Integer(number, 50, 99) then F.db.odds = number end
         end,
-        "The chance of finishing at or above break-even that [A]'s price limits aim for (50-99). Higher means lower maximum prices.")
+        U.TIPS.odds)
     local percent = Text(frame, nil, GREY)
     percent:SetPoint("LEFT", frame.oddsBox, "RIGHT", 4, 0)
     percent:SetText("%")
     local marginLabel = Text(frame, nil, GREY)
     marginLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE + 6 + 344, -(BUDGET_Y + 3))
-    marginLabel:SetText("Margin:")
+    marginLabel:SetText("Min margin:")
     frame.marginBox = MakeInput(SIDE + 6 + 344 + 48, 34, 3,
         function() return tostring(F.Integer(F.db.margin, 0, 100) and F.db.margin or 10) end,
         function(text)
             local number = tonumber(text)
             if F.Integer(number, 0, 100) then F.db.margin = number end
         end,
-        function()
-            if state.de then
-                return "Min return: the least profit, in percent of an item's price, to be listed (0-100) and the margin its search price limit leaves: the search never pays more than the disenchant value divided by 1 + this."
-            end
-            return "The least profit on cost, in percent, that [A]'s price limits leave (0-100). Together with Odds this stops a list buying into the expensive end of the auction house: the lower of the two limits is used."
-        end)
+        U.TIPS.margin)
     local marginPercent = Text(frame, nil, GREY)
     marginPercent:SetPoint("LEFT", frame.marginBox, "RIGHT", 4, 0)
     marginPercent:SetText("%")
     frame.marginLabel = marginLabel
 
     -- Enchanting tab: the least profit an item must show to be listed, in silver AND copper. Saved in copper as db.minProfitCopper.
-    local MIN_PROFIT_TIP = "The least profit an item must show to be listed on the Enchanting tab : silver and copper. 0 and 0 lists everything that pays at all."
+    local MIN_PROFIT_TIP = U.TIPS.minProfit
     local function MinProfitCurrent()
         return F.Number(F.db.minProfitCopper) and F.db.minProfitCopper >= 0 and F.db.minProfitCopper or 100
     end
@@ -1965,7 +2144,7 @@ local function Build()
             local number = tonumber(text)
             if F.Integer(number, 0, 100) then F.db.minOdds = number end
         end,
-        "The least chance, in percent, that one disenchant of the item brings in more than it cost (the Odds column), to be listed (0-100). Each disenchant is a single roll: a high average profit can still lose most of the time. 0 turns this off.")
+        U.TIPS.minOdds)
     frame.minOddsPercent = Text(frame, nil, GREY)
     frame.minOddsPercent:SetPoint("LEFT", frame.minOddsBox, "RIGHT", 4, 0)
     frame.minOddsPercent:SetText("%")
@@ -1981,7 +2160,7 @@ local function Build()
             local number = tonumber(text)
             if F.Integer(number, 0, F.Disenchant.MAX_AGE) then F.db.maxAge = number end
         end,
-        "The oldest price, in days, the Enchanting list trusts: 0 shows only prices seen today, 1 also yesterday's. Never more than 1: Auctionator keeps every price until a newer one replaces it, so an item sold since your last scan stays in its database with its old price, and those are left out.")
+        U.TIPS.maxAge)
     frame.maxAgeUnit = Text(frame, nil, GREY)
     frame.maxAgeUnit:SetPoint("LEFT", frame.maxAgeBox, "RIGHT", 4, 0)
     frame.maxAgeUnit:SetText("d")
@@ -1997,13 +2176,12 @@ local function Build()
             local number = tonumber(text)
             F.db.buyCrafts = (number and number >= 1) and math.min(math.floor(number), 100000) or nil
         end,
-        "The most crafts an [A] shopping list is for. Empty (or Max ticked) means as many as your budget allows. Either way the price limits (odds and margin) and the budget apply.",
+        U.TIPS.buy,
         BUY_Y)
     local buyUnit = Text(frame, nil, GREY)
     buyUnit:SetPoint("LEFT", frame.buyBox, "RIGHT", 4, 0)
     buyUnit:SetText("crafts")
-    frame.maxCheck = MakeCheck(frame, "Max (fill the budget)",
-        "Buy for as many crafts as your budget allows, within the price limits. Untick it to type a number of crafts instead.",
+    frame.maxCheck = MakeCheck(frame, "Max", U.TIPS.max,
         SIDE + 6 + 50 + 56 + 50, -BUY_Y, function()
             if F.db.buyCrafts == nil then
                 F.db.buyCrafts = F.Integer(F.db.crafts, 1, 100000) and F.db.crafts or 100   -- a number to start from
@@ -2012,7 +2190,7 @@ local function Build()
             end
             U.Refresh()
         end)
-    frame.maxCheck:SetSize(190, 18)
+    frame.maxCheck:SetHeight(18)
 
     -- Search: narrows the list on every tab to the recipes or items whose name contains the text, as you
     -- type. Not saved. Escape clears it (a second Escape leaves the box).
@@ -2036,13 +2214,7 @@ local function Build()
     search:SetScript("OnEscapePressed", function(self)
         if self:GetText() ~= "" then self:SetText("") else self:ClearFocus() end   -- (SetText runs OnTextChanged)
     end)
-    search:SetScript("OnEnter", function(self)
-        if type(GameTooltip) ~= "table" then return end
-        GameTooltip:SetOwner(self, "ANCHOR_CURSOR_RIGHT")
-        GameTooltip:ClearLines()
-        GameTooltip:AddLine("Type part of a recipe's or item's name to show only those. Escape clears it.", 1, 1, 1, true)
-        GameTooltip:Show()
-    end)
+    search:SetScript("OnEnter", function(self) U.ShowTip(self, U.TIPS.search) end)
     search:SetScript("OnLeave", function() if type(GameTooltip) == "table" then GameTooltip:Hide() end end)
     frame.searchBox = search
     frame.searchLabel = Text(frame, nil, GREY)
@@ -2051,9 +2223,9 @@ local function Build()
 
     BuildDropdowns()
 
-    -- the controls that only mean something for recipes (hidden on the Enchanting tab, U.Refresh)
-    frame.recipeOnly = { frame.profitOnly, label, frame.budgetBox, coin, oddsLabel, frame.oddsBox, percent, buyLabel, frame.buyBox, buyUnit, frame.maxCheck,
-        frame.ownedFree, frame.sellAH, frame.showAH, frame.sellDE }
+    -- the toolbar's controls, laid out by U.PlaceBar (U.Refresh)
+    BuildBar({ budgetLabel = label, coin = coin, oddsLabel = oddsLabel, oddsPercent = percent, marginPercent = marginPercent,
+        buyLabel = buyLabel, buyUnit = buyUnit })
 
     local function Heading(key, text, sortKey, justify)
         local heading = CreateFrame("Button", nil, frame)
@@ -2358,7 +2530,7 @@ local function Build()
 end
 
 -- The flat widgets and colours, shared with the luck window (LuckUI.lua) instead of copied there.
-U.W = { SetReady = SetReady, ABTN = ABTN, MakeCheck = MakeCheck, KeepRowTipOff = KeepRowTipOff, MakeNativeButton = MakeNativeButton, MakeIconTip = MakeIconTip, MakeTab = MakeTab, MakeTabStrip = MakeTabStrip, LayoutTabs = LayoutTabs, PaintTab = PaintTab, TAB_SHIFT = TAB_SHIFT, RememberTip = RememberTip, NewTip = NewTip, ShowLines = ShowLines, PlaceTopLeft = PlaceTopLeft, Box = Box, Text = Text, SetText = SetText, MakeButton = MakeButton, PaintButton = PaintButton, Color = Color,
+U.W = { ShowTip = ShowControlTip, SetReady = SetReady, ABTN = ABTN, MakeCheck = MakeCheck, KeepRowTipOff = KeepRowTipOff, MakeNativeButton = MakeNativeButton, MakeIconTip = MakeIconTip, MakeTab = MakeTab, MakeTabStrip = MakeTabStrip, LayoutTabs = LayoutTabs, PaintTab = PaintTab, TAB_SHIFT = TAB_SHIFT, RememberTip = RememberTip, NewTip = NewTip, ShowLines = ShowLines, PlaceTopLeft = PlaceTopLeft, Box = Box, Text = Text, SetText = SetText, MakeButton = MakeButton, PaintButton = PaintButton, Color = Color,
     GOLD = GOLD, TEXT = TEXT, GREY = GREY, GREEN = GREEN, RED = RED, ORANGE = ORANGE, DIVIDER = DIVIDER,
     QUALITY = QUALITY, UNKNOWN_ICON = UNKNOWN_ICON }
 
@@ -2432,7 +2604,7 @@ function U.Visible()
         if row and row:IsShown() and row.data then
             out[#out + 1] = { name = row.name:GetText(), count = row.count:GetText(), mats = row.cell.mats:GetText(), vendor = row.cell.vendor:GetText(),
                 profit = row.cell.profit:GetText(), hour = row.cell.hour:GetText(),
-                margin = row.cell.margin:GetText(), rank = row.cell.rank:GetText(), odds = row.cell.odds:GetText() }
+                margin = row.cell.margin:GetText(), rank = row.cell.rank:GetText(), odds = row.cell.odds:GetText(), level = row.cell.level:GetText() }
         end
     end
     return out

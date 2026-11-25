@@ -2,7 +2,7 @@
 -- caches, the Master Chef rank read, and the list of rows the window shows. No frames (UI.lua) and
 -- no event registration (Core.lua). The arithmetic is in Calc.lua.
 local addonName, F = ...
-F.VERSION = "0.43.12"
+F.VERSION = "0.44.0"
 F.CALLER = addonName   -- Auctionator wants the calling addon's name as its first argument
 F.eventIssues = {}
 
@@ -262,6 +262,7 @@ function F.ItemMeta(id)
             if F.String(saved.name) and saved.name ~= "" then m.name = saved.name end
             if F.Integer(saved.quality, 0, 10) then m.quality = saved.quality end
             if saved.icon ~= nil and (type(saved.icon) == "number" or type(saved.icon) == "string") then m.icon = saved.icon end
+            if F.Integer(saved.bind, 0, 10) then m.bind = saved.bind end   -- how it binds, as last read: shown at once, replaced when the game says otherwise
         end
     end
     if m.sell ~= nil and m.class ~= nil and m.name and m.bindRead then return m end
@@ -286,6 +287,7 @@ function F.ItemMeta(id)
             local saved = F.db.items[id]   -- the item is really loaded now: keep what the next session needs
             if type(saved) ~= "table" then saved = {}; F.db.items[id] = saved end
             saved.name, saved.quality, saved.icon = m.name, m.quality, m.icon
+            if m.bindRead and m.bind ~= nil then saved.bind = m.bind end   -- (only what the game itself said: a change replaces the kept value)
         end
     end
     if (m.sell == nil or not m.name) and not m.requested and F.Has(C_Item, "RequestLoadItemDataByID") then
@@ -862,6 +864,7 @@ local function BuildRowsOf(prof)
             and (proc or F.ItemMeta(recipe.out).sell ~= 0 or (db.sellAH == true and F.AuctionPrice(recipe.out))
                 or (F.SellDE() and (F.Disenchant.ValueOf(recipe.out) or 1) > 0)) then   -- (a result nobody buys is only ever a material)
             local item = F.ItemMeta(recipe.out)
+            if unknown and F.Integer(recipe.item, 1, 2147483647) then F.ItemMeta(recipe.item) end   -- (the recipe item's data is asked for now, so its bind type is there at the hover and kept for the next session)
             if unknown and not F.IsFood(item) then return end   -- (a learned recipe is only kept for food; the catalog's wait for the item data)
             local seconds, secondsFrom = F.CraftSeconds(id)
             -- Materials the player makes cheaper than they can buy them: costed by their own materials, and their

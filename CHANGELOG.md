@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.44.0
+- **A new toolbar.** The controls under the tabs are grouped in rows with a caption: **View**, **Value** and **Shopping** on recipe tabs, **View** and **Filters** on the Enchanting tab. They are laid out by their own width, so nothing overlaps. The shopping settings stay in view.
+- Renamed: Odds is now **Confidence**, Margin is **Min margin**. The empty Budget box says "all gold".
+- **Enchanting:** a **Level** column (the item's level) left of the AH price; the Quality and Level dropdowns are narrower.
+- **Short hovers** on every toolbar control and every control of the luck window: a title, then short labelled lines, coloured by meaning. The unlearned recipe's `Binds on Equip` is an earthy green and `Binds on Pickup` an earthy red, and the bind type is remembered, so the line is there at once.
+- **Vendor "+":**
+  - It is at the bottom right of the merchant window.
+  - It buys the materials of every recipe in step, so one material cannot take all the bag room.
+  - The recipe you hold the least meat for is bought first, in full.
+  - Its tooltip is grouped per dish: `Craft: [dish] xN`, `Buy: [supply] xY` for each supply, `Cost:`, a rule between dishes, then the Total.
+  - The rules are as wide as the tooltip. The tooltip says when a stack size or the bag space cannot be read.
+- **Create All "+"** (Cooking window): the same layout as the vendor tooltip. Below the crafts you can start it lists the dishes your meat could make, with a red `Missing:` line for each supply you lack.
+
 ## 0.43.12
 - **Enchanting tab:**
   - The "Apply filters" box is gone: Min return, Min profit, Min odds and Max age always apply, and items that lose money are never listed.

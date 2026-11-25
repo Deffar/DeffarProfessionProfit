@@ -552,58 +552,71 @@ local function IconText(icon, size)
     return "|T" .. tostring(icon) .. ":" .. size .. "|t "
 end
 
--- The tooltip lines of what an item disenchants into (the chance of each result, how many, what it is worth when it drops).
-function D.TipOutcomes(tip, itemID)
+-- The highest price worth paying for a row's item at the Margin set (what [A] searches with): its price after the cut over (1 + margin).
+function D.Cap(de)
+    local margin = F.Integer(F.db.margin, 0, 100) and F.db.margin or 10
+    return math.floor(de.net / (1 + margin / 100)), margin
+end
+
+-- What an item disenchants into, one line per result in the shared look (Style.lua): "[icon] Name" and, on the right, the chance
+-- and how many come when it does. With `worth` (the Profit tooltip) what that is worth when it drops follows: "= 1s - 2s (50c each)".
+function D.TipOutcomes(tip, itemID, worth)
     local outcomes = D.Outcomes(itemID)
-    if outcomes then
-        -- one line per result with its icon and name: the chance of getting it, how many come when it does and what that is
-        -- worth
-        tip:AddLine(" ")
-        tip:AddLine("Disenchants into  (chance, quantity = worth when it drops)", 0.7, 0.7, 0.73)
-        local names = _G.Auctionator and _G.Auctionator.Constants and _G.Auctionator.Constants.DisenchantingItemName
-        for _, out in ipairs(outcomes) do
-            local meta = F.ItemMeta(out.id)
-            local name = meta.name or (type(names) == "table" and names[out.id]) or ("Item " .. out.id)
-            local quantity = out.low == out.high and tostring(out.low) or (out.low .. "-" .. out.high)
-            local worth
+    if not outcomes then return end
+    local St = F.Style
+    local names = _G.Auctionator and _G.Auctionator.Constants and _G.Auctionator.Constants.DisenchantingItemName
+    tip:AddLine(" ")
+    tip:AddLine("Disenchants into", St.DIM[1], St.DIM[2], St.DIM[3])
+    for _, out in ipairs(outcomes) do
+        local meta = F.ItemMeta(out.id)
+        local label
+        if meta.name then
+            label = St.ItemLabel(out.id)
+        else
+            label = IconText(meta.icon, 14) .. ((type(names) == "table" and names[out.id]) or ("Item " .. out.id))
+        end
+        local quantity = out.low == out.high and tostring(out.low) or (out.low .. "-" .. out.high)
+        local right = St.Percent((string.format("%.1f", out.chance):gsub("%.0$", "")) .. "%") .. St.Grey(" x") .. St.Paint(St.SAGE, quantity)
+        if worth then
             if out.price then
-                worth = F.Money(out.low * out.price)
-                if out.high ~= out.low then worth = worth .. " - " .. F.Money(out.high * out.price) end
-                worth = worth .. "  |cff8a8a8a(" .. F.Money(out.price) .. " each)|r"
+                local sum = F.Money(out.low * out.price)
+                if out.high ~= out.low then sum = sum .. St.Grey(" - ") .. F.Money(out.high * out.price) end
+                right = right .. St.Grey(" = ") .. sum .. St.Grey(" (") .. F.Money(out.price) .. St.Grey(" each)")
             else
-                worth = "|cff8a8a8ano price|r"
+                right = right .. St.Grey(" = no price")
             end
-            tip:AddDoubleLine(IconText(meta.icon, 14) .. name,
-                string.format("%s%%  x%s  =  %s", (string.format("%.1f", out.chance):gsub("%.0$", "")), quantity, worth),
-                1, 1, 1, 1, 1, 1)
         end
-    else
-        local lines = D.Breakdown(itemID)   -- Auctionator's own text, without icons
-        if lines then
-            tip:AddLine(" ")
-            tip:AddLine("Disenchants into", 0.7, 0.7, 0.73)
-            for _, line in ipairs(lines) do tip:AddLine(line, 1, 1, 1) end
-        end
+        tip:AddDoubleLine(label, right, 1, 1, 1, 1, 1, 1)
     end
 end
 
--- The tooltip lines of a row (tip is the collector UI.lua's NewTip returns).
+-- The row tooltip over the item name (tip is the collector UI.lua's NewTip returns): short facts, in the shared look.
 function D.TipLines(tip, d)
+    local St = F.Style
     local de = d.de
-    tip:AddLine("Click: search it at the auction house (Auctionator).", 0.5, 0.8, 1)
+    tip:AddLine("Click: search it at the auction house.", 0.5, 0.8, 1)
+    tip:AddLine("Shift-click: the highest price to pay.", 0.5, 0.8, 1)
     tip:AddLine("Ctrl-click: it cannot be disenchanted, hide it.", 0.5, 0.8, 1)
-    tip:AddDoubleLine("AH price (last scan)", F.Money(de.price), 0.7, 0.7, 0.73, 1, 1, 1)
     local database = PriceDatabase()
     local age = database and F.Has(database, "GetPriceAge") and database:GetPriceAge(de.key) or nil
-    if age and age >= 1 then tip:AddLine(string.format("That price is %d d old.", math.floor(age)), 1, 0.65, 0.2) end
-    tip:AddDoubleLine("Disenchants for (average)", F.Money(de.gross), 0.7, 0.7, 0.73, 1, 1, 1)
-    tip:AddDoubleLine(string.format("After the %d%% AH cut", math.floor(F.AH_CUT * 100 + 0.5)), F.Money(de.net), 0.7, 0.7, 0.73, 1, 1, 1)
-    tip:AddDoubleLine("Profit", F.ProfitText(d.ev.profit), 0.7, 0.7, 0.73, 1, 1, 1)
-    if de.odds then
-        tip:AddDoubleLine("Chance one disenchant pays", string.format("%d%%", math.floor(de.odds + 0.5)), 0.7, 0.7, 0.73, 1, 1, 1)
-    end
-    D.TipOutcomes(tip, d.itemID)
-    if d.vendorValue then tip:AddDoubleLine("Vendor sell price", F.Money(d.vendorValue), 0.7, 0.7, 0.73, 1, 1, 1) end
+    St.Line(tip, "AH price", F.Money(de.price) .. ((age and age >= 1) and St.Grey(string.format(" (%d d old)", math.floor(age))) or ""))
+    if d.vendorValue then St.Line(tip, "Vendor sell price", F.Money(d.vendorValue)) end
+    D.TipOutcomes(tip, d.itemID, false)
+end
+
+-- The tooltip over the Profit / Return cell: how the profit is worked out.
+function D.ProfitLines(tip, d)
+    local St = F.Style
+    local de, ev = d.de, d.ev
+    St.Line(tip, "AH price (to buy)", F.Money(de.price))
+    St.Line(tip, "Disenchants for (average)", F.Money(de.gross))
+    St.Line(tip, string.format("After the %d%% AH cut", math.floor(F.AH_CUT * 100 + 0.5)), F.Money(de.net))
+    St.Line(tip, "Profit", St.Signed(ev.profit))
+    if ev.margin then St.Line(tip, "Return", St.Percent(string.format("%.0f%%", ev.margin * 100))) end
+    if de.odds then St.Line(tip, "Chance one disenchant pays", St.Percent(math.floor(de.odds + 0.5) .. "%")) end
+    local cap, margin = D.Cap(de)
+    if cap >= 1 then St.Line(tip, St.Grey("Highest price to pay (") .. St.Percent(margin .. "%") .. St.Grey(")"), F.Money(cap)) end
+    D.TipOutcomes(tip, d.itemID, true)
 end
 
 -- Makes the Auctionator list "Profession Profit - Disenchant" with this one item, at the highest price that still leaves the
@@ -615,8 +628,7 @@ function D.Search(row)
         return nil
     end
     local de = row.de
-    local margin = F.Integer(F.db.margin, 0, 100) and F.db.margin or 10
-    local cap = math.floor(de.net / (1 + margin / 100))
+    local cap, margin = D.Cap(de)
     if cap < 1 then
         F.Print(row.name .. " is not worth buying at any price with a " .. margin .. "% margin.")
         return nil
@@ -700,11 +712,38 @@ local function TermsInclude(terms, name)
     return false
 end
 
+-- A search that is ABORTED announces its end too, with whatever it had loaded so far (Auctionator Source\Search\Mixins\MultiSearchMixin.lua
+-- AbortSearch calls the completion callback), and with the default setting (no entry for terms without results) that is an empty list
+-- exactly like a search that really found nothing. Auctionator aborts a search when the player leaves it: collapsing the list, opening
+-- the buy screen for a result, switching tab or closing the house, pressing Search again (Source\Tabs\Shopping\Mixins\Main.lua StopSearch).
+-- Leaving the page while it was still loading made items with dozens of listings disappear from the list (human report, 2026-11-24).
+-- So the abort is wrapped on the shopping tab's search provider (the global frame AuctionatorShoppingFrame, FOR-0187): an end that
+-- arrives while an abort is running is not an answer. Without that frame the old behaviour stays and /dpp status says so.
+local aborting = false
+function D.GuardAborts()
+    local frame = _G.AuctionatorShoppingFrame
+    local provider = type(frame) == "table" and frame.SearchProvider or nil
+    if type(provider) ~= "table" or type(provider.AbortSearch) ~= "function" then return D.abortGuard == true end
+    if provider.dppGuarded then D.abortGuard = true; return true end
+    local original = provider.AbortSearch
+    provider.AbortSearch = function(self, ...)
+        local was = aborting
+        aborting = true
+        local result = original(self, ...)   -- (the end event is fired from inside this call)
+        aborting = was
+        return result
+    end
+    provider.dppGuarded = true
+    D.abortGuard = true
+    return true
+end
+
 local removal   -- { key } of an item whose search ended with nothing real, waiting a moment to be sure the search was not stopped for a new one
 
 function listener:ReceiveEvent(eventName, data)
     local events = SearchEvents()
     if not events then return end
+    if aborting and eventName == events.SearchEnd then return end   -- the end of a search the player left: it says nothing about the item
     local search = D.searching
     if search and Clock() - search.time > 120 then D.searching = nil; search = nil end
     if eventName == events.SearchStart then
@@ -738,6 +777,7 @@ end
 
 local listening = false
 function D.Listen()
+    D.GuardAborts()
     if listening then return true end
     local auctionator = _G.Auctionator
     local bus = type(auctionator) == "table" and auctionator.EventBus or nil

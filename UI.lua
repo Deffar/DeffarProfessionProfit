@@ -790,16 +790,22 @@ local function PaintDetail(d)
     if ev.status == "ok" then
         -- one short line; the table below speaks for itself
         local explain = state.proc and string.format("Break-even price per material at rank %d.", ev.rank) or "Break-even price per material."
+        if d.de then explain = "Break-even price to buy it, from what it disenchants for." end
         explain = explain .. string.format(" Teal line: your Margin (%d%%).", F.Integer(F.db.margin, 0, 100) and F.db.margin or 10)
         panel.head:SetText(explain .. ViaText(d.via))
-        for _, line in ipairs(ev.reagents) do
+        -- an Enchanting row buys one thing, the item itself, at its auction house price; it breaks even at what it disenchants for
+        local reagents = ev.reagents
+        if d.de then reagents = { { id = d.itemID, qty = 1, unit = ev.cost, total = ev.cost, maxUnit = math.floor(ev.expected), de = true } } end
+        for _, line in ipairs(reagents) do
             local item = F.ItemMeta(line.id)
             local cells = { qty = { F.QtyText(line.qty) .. "x", SAGE_RGB }, name = { item.name or ("Item " .. tostring(line.id)), QUALITY[item.quality or 1] or TEXT },
                 now = { "", TEXT }, max = { "", GREY }, room = { "", GREY }, id = line.id, icon = item.icon }
+            if d.de then cells.name = { d.name, QUALITY[item.quality or 1] or TEXT } end
             if line.free then
                 cells.max, cells.now[1] = { "owned", GREY }, "free"
             elseif line.unit then
                 local _, source = F.UnitCost(line.id)
+                if line.de then source = "ah" end   -- (the gear piece is bought at the auction house)
                 cells.now[1] = F.Money(line.unit)
                 local saved = F.db.vendorBuy and F.db.vendorBuy[line.id]
                 local vendorUnit = type(saved) == "table" and F.Number(saved.c) and saved.c or nil
@@ -849,7 +855,7 @@ local function PaintDetail(d)
             moreCount = #lines - (DETAIL_MAX - 1)
             for index = #lines, DETAIL_MAX, -1 do lines[index] = nil end
         end
-        if F.Number(ev.expected) and ev.expected > 0 and F.Number(ev.cost) then
+        if not d.de and F.Number(ev.expected) and ev.expected > 0 and F.Number(ev.cost) then   -- (an Enchanting row's one line is the whole)
             local calc = F.Calc
             local marginPct = F.Integer(F.db.margin, 0, 100) and F.db.margin or 10
             local band = ev.margin and calc.MarginBand(ev.margin) or "green"
@@ -1415,12 +1421,17 @@ end
 
 function ShowProfitTip(row, refresh)
     local d = row.data
-    if not d or d.de or type(GameTooltip) ~= "table" then return end
+    if not d or type(GameTooltip) ~= "table" then return end
     local ev = d.ev
     local St = F.Style
     local tip = NewTip()
     RememberTip(row, ShowProfitTip)
     tip:AddLine("Profit: " .. d.name, GOLD[1], GOLD[2], GOLD[3])
+    if d.de then   -- the Enchanting tab: what it costs, what it disenchants for, the profit and what it turns into
+        F.Disenchant.ProfitLines(tip, d)
+        ShowLines(row, tip, refresh)
+        return
+    end
     if ev.status ~= "ok" then
         if ev.status == "noprice" then St.Note(tip, "A material has no price yet, so no profit is shown.")
         elseif ev.status == "nosell" then
@@ -1932,6 +1943,12 @@ local function Build()
         row:SetScript("OnClick", function(self)
             if not self.data then return end
             if self.data.de then
+                if type(IsShiftKeyDown) == "function" and IsShiftKeyDown() then   -- Shift-click: the highest price to pay (the detail panel)
+                    state.expanded = (state.expanded ~= self.data.id) and self.data.id or nil
+                    if type(GameTooltip) == "table" then GameTooltip:Hide() end
+                    U.Refresh()
+                    return
+                end
                 if type(IsControlKeyDown) == "function" and IsControlKeyDown() then   -- Ctrl-click: this cannot be disenchanted
                     if type(GameTooltip) == "table" then GameTooltip:Hide() end
                     F.Disenchant.Block(self.data.itemID, self.data.item and self.data.item.name)

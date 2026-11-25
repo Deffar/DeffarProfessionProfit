@@ -82,6 +82,12 @@ end
 -- The craft to make: { id, name, profit (copper per craft), crafts }, the one with the best profit per craft among the profession's
 -- saved recipes the bags allow at least one craft of and whose requirements are met; nil when there is none. The second value says whether
 -- any recipe could be made by the materials, the third lists those skipped for an unmet requirement ({ name, profit, needs }).
+local function Entry(row, crafts)
+    local ev = row.ev
+    return { id = row.id, name = row.name, profit = ev and ev.profit, crafts = crafts, out = row.recipe.out, expected = ev and ev.expected,
+        factor = (ev and F.Number(ev.sellEach) and ev.sellEach > 0 and F.Number(ev.expected)) and ev.expected / ev.sellEach or nil }
+end
+
 function C.Best(prof)
     local rows = F.BuildRows(prof)
     local best, any
@@ -91,12 +97,14 @@ function C.Best(prof)
         if crafts >= 1 then
             local needs, names = C.Unmet(row.id)
             if needs then
-                skipped[#skipped + 1] = { name = row.name, profit = row.ev and row.ev.profit, needs = needs, names = names }
+                local entry = Entry(row, crafts)   -- (the same fields as a craft that can start: the tooltip lists it the same way)
+                entry.needs, entry.names = needs, names
+                skipped[#skipped + 1] = entry
             else
                 any = true
                 local profit = row.ev and row.ev.profit
                 if F.Number(profit) then
-                    local entry = { id = row.id, name = row.name, profit = profit, crafts = crafts, out = row.recipe.out, expected = row.ev.expected }
+                    local entry = Entry(row, crafts)
                     makeable[#makeable + 1] = entry
                     if not best or profit > best.profit then best = entry end
                 end
@@ -104,6 +112,7 @@ function C.Best(prof)
         end
     end
     table.sort(makeable, function(a, b) return a.profit > b.profit end)
+    table.sort(skipped, function(a, b) return (a.profit or -math.huge) > (b.profit or -math.huge) end)
     return best, any == true, skipped, makeable
 end
 
@@ -126,6 +135,20 @@ local function ItemText(best)   -- (best: any { out, name } entry)
     return best.name
 end
 
+-- What one craft sells for, whatever the panel's sell mode is (a mode only changes the profit the recipes are ranked by): to a vendor, or
+-- at the auction house (Shift): the Auctionator price less the AH cut. Times the items a craft is expected to give. nil without a price.
+function C.VendorValue(entry)
+    local sell = F.Integer(entry.out, 1, MAX) and F.ItemMeta(entry.out).sell or nil
+    if not (F.Number(sell) and sell > 0 and entry.factor) then return nil end
+    return math.floor(sell * entry.factor)
+end
+
+function C.AuctionValue(entry)
+    local ah = F.AuctionPrice(entry.out)
+    if not (ah and entry.factor) then return nil end
+    return math.floor(math.floor(ah * (1 - F.AH_CUT)) * entry.factor)
+end
+
 -- What a click would do, as lines for the tooltip and the chat: { text, ok } where ok is whether a craft would start.
 function C.Plan(prof)
     local best, any, skipped = C.Best(prof)
@@ -134,9 +157,7 @@ function C.Plan(prof)
         if #skipped > 0 and not any then return "You hold the materials, but a requirement is missing.", false, nil, why end
         return any and "No profit can be worked out for what you can make (a price is missing)." or "You do not hold the materials for any saved recipe.", false, nil, why
     end
-    if best.profit <= 0 then
-        return string.format("Nothing you can make is profitable: the best is %s x%d at %s each.", best.name, best.crafts, F.ProfitText(best.profit)), false, best, why
-    end
+    -- (a craft that loses money is still made: the player asked for it, and the tooltip shows the loss; the best of them is the one made)
     -- "[Item] x46 | 6m 12s": the made item, the number of crafts and how long they take (the profit is in the tooltip, not the chat)
     local each, source = F.CraftSeconds(best.id)
     return string.format("%s x%d | %s%s", ItemText(best), best.crafts, (source == "default" or source == "scaled") and "~" or "", F.DurationText(best.crafts * each)),
@@ -169,22 +190,24 @@ local function Tip(button)
     GameTooltip:ClearLines()
     S.Title(GameTooltip, shift and "Create All (AH)" or "Create All")
     if prof then
-        -- every recipe the bags allow and whose requirements are met, the most profitable first (that is the one a click makes):
+        -- every recipe the bags allow and whose requirements are met, the most profitable first (that is the one a click makes);
+        -- when a requirement (a fire, an Iron Oven) keeps every one of them from starting, the recipes it holds back are listed the same way:
         --   [icon] Item xN
-        --   +Y per (O total)
-        for index, entry in ipairs(makeable) do
+        --   +V per (T total): the vendor price of a craft, with Shift the auction house price after the cut
+        local _, ok = C.Plan(prof)
+        local listed = (#makeable == 0 and not ok) and skipped or makeable
+        for index, entry in ipairs(listed) do
             if index > 8 then GameTooltip:AddLine("...", S.DIM[1], S.DIM[2], S.DIM[3]); break end
             GameTooltip:AddLine(S.ItemQty(entry.out, entry.name, entry.crafts, S.SAND), 1, 1, 1)
-            -- holding Shift shows the auction house price in place of the profit: what one
-            -- craft sells for in Profession Profit's numbers (Calc `expected`: the AH price times the expected output) and all of the crafts
-            if shift and F.Number(entry.expected) then
-                GameTooltip:AddLine(S.PerTotal(entry.expected, entry.expected * entry.crafts), 1, 1, 1)
+            -- what one craft sells for: to a vendor, or with Shift held at the auction house (after its cut), both whatever the sell mode
+            local value = shift and C.AuctionValue(entry) or (not shift and C.VendorValue(entry)) or nil
+            if value then
+                GameTooltip:AddLine(S.PerTotal(value, value * entry.crafts), 1, 1, 1)
             else
-                GameTooltip:AddLine(S.PerTotal(entry.profit, entry.profit * entry.crafts), 1, 1, 1)
+                GameTooltip:AddLine(S.Grey(shift and "No auction house price." or "A vendor does not buy it."), 1, 1, 1)
             end
         end
         -- greyed out: a short reason in the tooltip's grey (the missing requirements are named only here, not in the chat line)
-        local _, ok = C.Plan(prof)
         if not ok then
             local missing, seen = {}, {}
             for _, s in ipairs(skipped) do
@@ -192,9 +215,8 @@ local function Tip(button)
                     if not seen[name] then seen[name] = true; missing[#missing + 1] = name end
                 end
             end
-            if #makeable == 0 and #missing > 0 then S.Good(GameTooltip, "You hold the materials.")
-            elseif not best then S.Reason(GameTooltip, any and "A price is missing." or "No materials.")
-            else S.Reason(GameTooltip, "Nothing pays.") end
+            -- (with only a requirement missing, the items listed above are what you hold the materials for: no sentence needed)
+            if not (#makeable == 0 and #missing > 0) then S.Reason(GameTooltip, any and "A price is missing." or "No materials.") end
             if #missing > 0 then
                 local shown = {}
                 for index, name in ipairs(missing) do

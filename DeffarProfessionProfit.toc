@@ -1,10 +1,11 @@
 ## Interface: 16001
 ## Title: Deffar Profession Profit
-## Notes: Shows which of your Cooking, Engineering and Tailoring recipes make a profit (vendor or auction house prices from Auctionator), ranks Enchanting disenchants, counts your crafting luck and what your auctions really bring in, and adds + buttons to buy materials at a vendor or Create All on the best craft (/dpp).
+## Notes: Shows which of your profession recipes earn the most gold per hour, with one-click buttons to buy materials and craft your best recipe (/dpp).
 ## Author: Deffar
-## Category: Deffar
-## Version: 0.39.0
+## Category: Professions
+## Version: 0.41.4
 ## OptionalDeps: Auctionator
+## IconTexture: Interface\AddOns\DeffarProfessionProfit\icon.tga
 ## SavedVariables: DeffarProfessionProfitDB
 
 Calc.lua
@@ -20,4 +21,5 @@ Luck.lua
 LuckUI.lua
 Vendor.lua
 Craft.lua
+Minimap.lua
 Core.lua

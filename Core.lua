@@ -85,6 +85,8 @@ local function Initialize()
         end
         if not F.Integer(saved.budget, 1, 100000000) then saved.budget = nil end   -- gold; absent = all the character's gold
         if not (F.Number(saved.left) and F.Number(saved.top)) then saved.left, saved.top = nil, nil end
+        if not F.Number(saved.minimapAngle) then saved.minimapAngle = nil end   -- the minimap button's place, in degrees (Minimap.lua)
+        if type(saved.minimapHidden) ~= "boolean" then saved.minimapHidden = false end
         if type(saved.vendorBuy) ~= "table" then saved.vendorBuy = {} end
         if type(saved.chars) ~= "table" then saved.chars = {} end
         if type(saved.luck) ~= "table" then saved.luck = {} end
@@ -99,6 +101,7 @@ local function Initialize()
     F.Bought.Snapshot()   -- the purse now is the starting point for the auction-house cost tracking
     F.HookCrafts()        -- Create All prints how long the batch takes (Data.lua)
     F.Sales.Hook()        -- postings and the mail of sold auctions feed the AH sales tab (Sales.lua)
+    F.Minimap.Create()    -- the button on the minimap (Minimap.lua)
 end
 
 ---------------------------------------------------------------------------
@@ -345,6 +348,8 @@ local function Status()
     F.Print("version " .. F.VERSION .. ".")
     F.Print(F.AuctionatorLoaded() and ("Auctionator: loaded" .. (F.priceHooked and ", the window redraws when it learns new prices." or ", price updates are not being watched yet (open the window or the auction house)."))
         or "Auctionator: not loaded (vendor prices you have seen are used).")
+    F.Print("Enchanting [A] search: " .. (F.Disenchant.abortGuard and "leaving the auction house page does not remove an item from the list."
+        or "not watching for aborted searches yet (press [A] on a row with the auction house open)."))
     local live, reason = F.ReadRank()
     local rank, source = F.CurrentRank()
     F.Print("Master Chef rank in use: " .. rank .. " (" .. source .. "). Live read: "
@@ -430,6 +435,7 @@ local function Help()
     print("  /dpp cooking | engineering | tailoring | enchanting - open the window on that profession's tab")
     print("  /dpp luck - the luck counter: extra results seen against the Master Chef chance (/dpp luck reset clears this session)")
     print("  /dpp status - what was read and saved")
+    print("  /dpp minimap on|off - show or hide the minimap button (drag it to move it)")
     print("  /dpp crafttime on|off - print how long a Create All takes (Deffar Profession Profit Craft time: 15m)")
     print("  /dpp sales - the luck window's AH sales tab: what your auctions really brought in, deposits included")
     print("  /dpp de - what the Enchanting tab found in Auctionator's data")
@@ -586,6 +592,9 @@ SlashCmdList.DEFFARPROFESSIONPROFIT = function(message)
             F.Print("not disenchantable, hidden from the Enchanting list: " .. (#names > 0 and table.concat(names, ", ") or "none")
                 .. ". Add one with /dpp nodisenchant [shift-click the item], or Ctrl-click a row.")
         end
+    elseif command == "minimap" then
+        local on = F.Minimap.Toggle(argument == "on" and true or argument == "off" and false or nil)
+        F.Print("the minimap button is now " .. (on and "shown." or "hidden.") .. (on and not F.Minimap.button and " (this client has no minimap to put it on.)" or ""))
     elseif command == "crafttime" then
         F.db.craftTime = (argument == "on") or (argument ~= "off" and not F.db.craftTime)
         F.Print("the time of Create All is now " .. (F.db.craftTime and "printed to the chat (Deffar Profession Profit Craft time: 15m)." or "not printed."))

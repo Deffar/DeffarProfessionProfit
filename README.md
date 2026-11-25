@@ -11,6 +11,7 @@ A World of Warcraft: Forever addon.
 - **AH sales:** shows what your auctions really brought in, with deposits and the auction house cut included.
 - **Vendor + button:** buys the materials your recipes need from the vendor you are visiting, based on what you already hold.
 - **Create All + button:** on your profession window, starts Create All on the most profitable craft you can make from your bags.
+- **Minimap button:** left-click opens the window, right-click the luck window, drag to move it (`/dpp minimap on|off`).
 - **Auctionator shopping lists:** one click on a recipe builds a list with price limits that keep the craft profitable.
 
 ## Notes

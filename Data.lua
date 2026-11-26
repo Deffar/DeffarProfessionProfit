@@ -2,7 +2,7 @@
 -- caches, the Master Chef rank read, and the list of rows the window shows. No frames (UI.lua) and
 -- no event registration (Core.lua). The arithmetic is in Calc.lua.
 local addonName, F = ...
-F.VERSION = "0.45.0"
+F.VERSION = "0.46.0"
 F.CALLER = addonName   -- Auctionator wants the calling addon's name as its first argument
 F.eventIssues = {}
 
@@ -304,6 +304,17 @@ function F.ItemMeta(id)
     return m
 end
 
+-- An item for a chat line: its real link (clickable, quality-coloured, hoverable) when the game has the item, else its name. Every chat line that
+-- names an item goes through this.
+function F.ItemLink(id, name)
+    if F.Integer(id, 1, MAX_INT) and F.Has(C_Item, "GetItemInfo") then
+        local _, link = C_Item.GetItemInfo(id)
+        if F.String(link) and link:find("|Hitem:", 1, true) then return link end   -- (a real item link, not a placeholder)
+    end
+    if F.String(name) and name ~= "" then return name end
+    return id and ("item " .. tostring(id)) or "?"
+end
+
 function F.IsFood(m)
     return m ~= nil and m.class == F.FOOD_CLASS and m.subclass == F.FOOD_SUBCLASS
 end
@@ -355,17 +366,13 @@ end
 ---------------------------------------------------------------------------
 
 function F.AuctionatorLoaded()
-    local api = _G.Auctionator and _G.Auctionator.API and _G.Auctionator.API.v1
-    return (api and api.GetAuctionPriceByItemID) and true or false
+    return F.Prices.AuctionatorLoaded()
 end
 
 -- Auctionator's price from your last scan (FOR-0166). Optional dependency: a missing addon or a call
 -- that errors just means "no AH price".
 function F.AuctionPrice(id)
-    if not F.AuctionatorLoaded() then return nil end
-    local ok, price = pcall(_G.Auctionator.API.v1.GetAuctionPriceByItemID, F.CALLER, id)
-    if ok and F.Integer(price, 1, MAX_INT) then return price end
-    return nil
+    return F.Prices.Price(id)   -- (Auctionator's price or TradeSkillMaster's: Prices.lua)
 end
 
 -- The auction house keeps 5% of a sale; the profit figures use the price after it.
@@ -395,11 +402,7 @@ end
 -- Days since the item was last seen in the auction house; nil when never seen or older than 21 days
 -- (Auctionator\Source\API\v1\GetAuctionAge.lua).
 function F.AuctionAge(id)
-    local api = _G.Auctionator and _G.Auctionator.API and _G.Auctionator.API.v1
-    if not (api and api.GetAuctionAgeByItemID) then return nil end
-    local ok, age = pcall(api.GetAuctionAgeByItemID, F.CALLER, id)
-    if ok and F.Number(age) and age >= 0 then return age end
-    return nil
+    return F.Prices.Age(id)
 end
 
 -- What it costs to get one of an item: the cheaper of the Auctionator price and the vendor buy price

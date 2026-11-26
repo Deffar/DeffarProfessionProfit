@@ -282,7 +282,7 @@ local function ShowProfitTip(row, refresh)
     end
     if F.PROFESSIONS[prof].disenchant then
         if item.k > 0 then
-            Line(tip, "Spent (AH price paid, else Auctionator)", F.Money(item.s))
+            Line(tip, "Spent (AH price paid, else market)", F.Money(item.s))
             Line(tip, "Gained (results at AH prices, less the cut)", F.Money(item.g))
             Line(tip, "Profit", Signed(item.g - item.s))
             Line(tip, "Per disenchant", Signed(math.floor((item.g - item.s) / item.k)))
@@ -1334,7 +1334,7 @@ local function EditPreview()
             e.money = value
             note = string.format("Adds %d sold and about %s received: %s each at the AH, less the 5%% cut, plus the deposit back.", e.units, F.Money(value), F.Money(price))
         else
-            note = "Auctionator has no price for this item: untick the box and type the money."
+            note = "No AH price for this item: untick the box and type the money."
         end
     else
         e.money = F.Bought.ParseMoney(e.moneyBox:GetText())

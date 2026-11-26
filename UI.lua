@@ -943,7 +943,7 @@ local function PaintDetail(d)
     elseif ev.status == "noprice" then
         panel.head:SetText("A material has no price yet.")
     elseif ev.status == "nosell" then
-        panel.head:SetText(SellDE() and "The result cannot be disenchanted." or (SellAH() and "No Auctionator price for the result." or "No vendor sell price."))
+        panel.head:SetText(SellDE() and "The result cannot be disenchanted." or (SellAH() and "No AH price for the result." or "No vendor sell price."))
     else
         panel.head:SetText("Loading item data.")
     end
@@ -1126,7 +1126,13 @@ local function PaintRow(row, d)
     for key, cell in pairs(d.cells) do
         if row.cell[key] then SetText(row.cell[key], cell[1], cell[2]) end
     end
-    row.abtn:SetShown(F.ShoppingAvailable())
+    local shop = F.ShoppingAvailable()
+    local tsmOnly = not shop and F.Prices.CannotShop() ~= nil   -- (TSM and no Auctionator: the button is T)
+    local grey = tsmOnly and not F.Prices.TSMAuctionVisible()    -- (greyed out until TSM's auction window is open, and says why)
+    row.abtn:SetShown(shop or tsmOnly)                           -- (it stays while TSM's window is open: it is what searches there)
+    row.abtn.idle = grey or nil
+    row.abtn.label:SetText(F.Prices.Addon() == "tsm" and "T" or "A")   -- (T while TSM is the first price source, A for Auctionator: the same size, so nothing in the row moves)
+    PaintButton(row.abtn)
 end
 
 local function DateText(stamp)
@@ -1166,8 +1172,11 @@ local function NoteText(info)
             tostring(info.keys or "?"), info.scanAt and (", full scan started " .. AgoText(F.Now() - info.scanAt)) or "",
             info.newest and (info.newest == 0 and ", prices seen today" or (", newest price " .. info.newest .. " d old")) or "")
     end
-    if not F.AuctionatorLoaded() then
-        notes[#notes + 1] = "Auctionator not loaded."
+    local addon = F.Prices.Addon()
+    if not addon then
+        notes[#notes + 1] = "No price addon: Auctionator or TradeSkillMaster."
+    elseif addon == "tsm" then
+        notes[#notes + 1] = "Prices: TSM " .. F.Prices.TSMSource() .. (F.Prices.AuctionatorLoaded() and ", then Auctionator." or " (age not shown).")
     elseif info.oldest and info.oldest >= 1 then
         notes[#notes + 1] = string.format("Prices up to %d d old.", math.floor(info.oldest))
     end
@@ -1265,6 +1274,10 @@ function TIPS.quality()
 end
 function TIPS.level()
     return { "Level", { "Shows", "one item level range" }, { "Pick a quality", "to see its results" } }
+end
+function TIPS.prices()
+    local first = F.Prices.Name() or "?"
+    return { "Price source", { "First", first }, { "Backup", first == "TSM" and "Auctionator" or "TSM" }, { hint = "Click: Switch" } }
 end
 function TIPS.refresh()
     return { "Refresh", { "Rebuilds", "the list from saved prices" }, { "Auction house", "not asked: scan with Auctionator" } }
@@ -1384,6 +1397,8 @@ function U.Refresh()
     end
     frame.rankButton:SetShown(info.proc)
     frame.refreshButton:SetShown(info.disenchant == true)
+    frame.priceButton:SetShown(F.Prices.BothLoaded())
+    frame.priceButton.label:SetText("Prices: " .. (F.Prices.Name() or "?"))
     U.UpdateScanText()
     -- The Enchanting list holds hundreds of rows: when nothing that shapes it changed (a page turn, a mouse-over redraw) the
     -- filtered, sorted, measured list of the last repaint is reused instead of being built and measured again.
@@ -1535,7 +1550,9 @@ function U.Refresh()
 
     if #shown == 0 then
         if info.unavailable then
-            frame.empty:SetText("Needs Auctionator with a scan of the auction house.")
+            local cannot = F.Prices.CannotEnchant()
+            frame.empty:SetText(cannot and (cannot .. ": the Enchanting list needs Auctionator. Use TSM's Shopping > Disenchant search.")
+                or "Needs Auctionator with a scan of the auction house.")
         elseif info.building then
             frame.empty:SetText(string.format("Building the list... %d%%", math.floor((F.Number(info.progress) and info.progress or 0) * 100 + 0.5)))
         elseif state.search ~= "" and #list > 0 then
@@ -1693,7 +1710,7 @@ function ShowProfitTip(row, refresh)
     if ev.status ~= "ok" then
         if ev.status == "noprice" then St.Note(tip, "A material has no price yet, so no profit is shown.")
         elseif ev.status == "nosell" then
-            tip:AddLine(SellDE() and "This cannot be disenchanted." or (SellAH() and "Auctionator has no price for this." or "This has no vendor sell price."), GREY[1], GREY[2], GREY[3], true)
+            tip:AddLine(SellDE() and "This cannot be disenchanted." or (SellAH() and "No AH price for this." or "This has no vendor sell price."), GREY[1], GREY[2], GREY[3], true)
         else
             tip:AddLine("Item data is still loading.", GREY[1], GREY[2], GREY[3])
         end
@@ -1716,6 +1733,22 @@ local function ShowShoppingTip(button)
     if type(GameTooltip) ~= "table" or not row.data then return end
     GameTooltip:SetOwner(button, "ANCHOR_CURSOR_RIGHT")
     GameTooltip:ClearLines()
+    local cannot = F.Prices.CannotShop()
+    local tsmOpen = not row.data.de and F.Prices.Addon() == "tsm" and F.Prices.TSMAuctionVisible()
+    if tsmOpen then
+        GameTooltip:AddLine("Search it in TSM", GOLD[1], GOLD[2], GOLD[3])
+        GameTooltip:AddLine("One material at a time, on TSM's Browse tab", GREY[1], GREY[2], GREY[3])
+        GameTooltip:AddLine("Click: Search the next material", 0.5, 0.8, 1)
+        GameTooltip:Show()
+        return
+    end
+    if cannot and not F.ShoppingAvailable() then
+        GameTooltip:AddLine("Shopping list", GOLD[1], GOLD[2], GOLD[3])
+        GameTooltip:AddLine(cannot, GREY[1], GREY[2], GREY[3])
+        GameTooltip:AddLine("Open TSM's auction window to search", 0.5, 0.8, 1)
+        GameTooltip:Show()
+        return
+    end
     if row.data.de then
         GameTooltip:AddLine("Search it at the auction house", GOLD[1], GOLD[2], GOLD[3])
         GameTooltip:AddLine("Click: Search", 0.5, 0.8, 1)
@@ -1723,6 +1756,7 @@ local function ShowShoppingTip(button)
         return
     end
     GameTooltip:AddLine(string.format("Profession Profit - %s", row.data.name), GOLD[1], GOLD[2], GOLD[3])   -- the Auctionator list it makes
+    if F.Prices.Addon() == "tsm" then GameTooltip:AddLine("An Auctionator list (TSM has none)", GREY[1], GREY[2], GREY[3]) end
     GameTooltip:AddLine("Click: Make the list", 0.5, 0.8, 1)
     local ctx = F.PlanShopping(row.data)
     local function Line(left, right) GameTooltip:AddDoubleLine(left, right, F.Style.DIM[1], F.Style.DIM[2], F.Style.DIM[3], 1, 1, 1) end
@@ -2365,7 +2399,32 @@ local function Build()
         row.abtn:SetScript("OnClick", function(self)
             local parent = self:GetParent()
             if not parent.data then return end
-            if parent.data.de then F.Disenchant.Search(parent.data) else F.SendShoppingList(parent.data) end
+            local data = parent.data
+            local cannot = F.Prices.CannotShop()
+            local tsmOpen = F.Prices.TSMAuctionVisible()
+            local function After(fn)   -- (TSM builds its window a moment after its tab is clicked)
+                if type(C_Timer) == "table" and type(C_Timer.After) == "function" then C_Timer.After(0.6, fn) else fn() end
+            end
+            if not data.de and F.Prices.Addon() == "tsm" then
+                if tsmOpen then   -- TSM's window is open: search there
+                    F.TSMSearch(data)
+                    return
+                end
+                if F.Prices.AuctionHouseOpen() and F.Prices.TSMShowWindow() then   -- the game's window is showing: bring TSM's up first
+                    After(function() F.TSMSearch(data) end)
+                    return
+                end
+            end
+            if cannot and not F.ShoppingAvailable() then
+                F.Print(cannot .. ": open TSM's auction window and press T again to search the materials there.")
+                return
+            end
+            local function Send() if data.de then F.Disenchant.Search(data) else F.SendShoppingList(data) end end
+            if tsmOpen and F.ShoppingAvailable() and F.Prices.TSMShowDefaultUI() then   -- Auctionator's list is made behind TSM's window: show the game's first
+                After(Send)
+                return
+            end
+            Send()
         end)
         row.abtn:HookScript("OnEnter", ShowShoppingTip)
         KeepRowTipOff(row, row.abtn)
@@ -2576,6 +2635,16 @@ local function Build()
     frame.pageText:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE + 70, -(FOOT_Y + 11))
     -- opens the luck window (/dpp luck), at the right end of the page row
     -- Enchanting tab: rebuilds the list from Auctionator's prices (it otherwise holds still, only its numbers update)
+    -- which addon the prices come from first, only when both TSM and Auctionator are loaded (one click switches; the other is the backup)
+    frame.priceButton = MakeButton(frame, "Prices", 120, 18)
+    frame.priceButton:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE + 250, -(FOOT_Y + 8))
+    frame.priceButton:SetScript("OnClick", function()
+        F.db.ahAddon = F.Prices.Addon() == "tsm" and "auctionator" or "tsm"
+        U.Refresh()
+    end)
+    frame.priceButton:HookScript("OnEnter", function(self) U.ShowTip(self, U.TIPS.prices) end)
+    frame.priceButton:HookScript("OnLeave", function() if type(GameTooltip) == "table" then GameTooltip:Hide() end end)
+    frame.priceButton:Hide()
     frame.refreshButton = MakeButton(frame, "Refresh", 64, 18)
     frame.refreshButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -SIDE, -(FOOT_Y + 8))
     frame.refreshButton:SetScript("OnClick", function(self)

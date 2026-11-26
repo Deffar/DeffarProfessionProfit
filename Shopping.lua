@@ -219,15 +219,46 @@ end
 -- the last [A] list asked for, and lowers Auctionator's quantity box to that many (never raises it, and
 -- never past what is still to buy after what you already got; /dpp autoqty off leaves the box alone).
 -- Repeats are skipped unless the answer changed, so a quantity you type yourself is not fought.
+-- Auctionator may set the quantity box again after we lowered it (it preselects the list's quantity when the results arrive): the lowered target
+-- is checked again a few times in the next seconds and only ever lowered (a number typed later is never fought: this stops after 3 looks).
+local function EnforceQuantity(itemID, target, tries)
+    if type(C_Timer) ~= "table" or type(C_Timer.After) ~= "function" then return end
+    C_Timer.After(0.8, function()
+        local active = F.activeCaps[itemID]
+        if not active or active.target ~= target or F.db.autoQuantity == false or target < 1 then return end
+        local box = BuyQuantityBox(itemID)
+        local shown = box and tonumber(box:GetText())
+        if shown and shown > target then
+            box:SetNumber(target)
+            active.reapplied = (active.reapplied or 0) + 1
+        end
+        if tries > 1 then EnforceQuantity(itemID, target, tries - 1) end
+    end)
+end
+
+-- The crafts the auction house lets this material make, from what its listings held when they were last read (`units` under the limit, `seenHeld`
+-- what was in the bags then) and what is in the bags NOW: units bought since are no longer there to buy, and what is held counts. Worked out when
+-- asked, never kept: right after a purchase the bags may not have the bought units yet, and a number kept from then is wrong (human report
+-- 2026-11-26: "murloc eye allows only 11 crafts" after buying 500 eyes). nil until the material's listings have been read.
+local function CraftsOf(a, id)
+    if not (a and a.seenHeld) then return nil end
+    local now = F.Owned(id)
+    local unitsLeft = math.max(0, (a.units or 0) - math.max(0, now - a.seenHeld))
+    local remainingNow = math.max(0, (a.need or 0) - math.max(0, now - (a.owned0 or 0)))
+    return math.floor((now + math.min(unitsLeft, remainingNow)) / (a.qty or 1))
+end
+
 local function EvaluateDepth(itemID)
     local active = F.Integer(itemID, 1, 2147483647) and F.activeCaps[itemID] or nil
     if not active then return end
+    active.evals = (active.evals or 0) + 1   -- (/dpp depth)
     local cap = active.cap
+    local item = F.ItemLink(itemID, active.name)   -- (the material, as a link in every line below)
     local depth, why = F.CommodityDepth(itemID, cap)
     if not depth then
         if not active.warned then
             active.warned = true
-            F.Print("cannot read the " .. active.name .. " listings (" .. tostring(why) .. "): check the unit price in the buy window yourself against the limit of " .. F.Money(active.cap) .. " each.")
+            F.Print("cannot read " .. item .. " listings (" .. tostring(why) .. "): check each unit against " .. F.Money(active.cap) .. ".")
         end
         return
     end
@@ -237,10 +268,18 @@ local function EvaluateDepth(itemID)
     -- The limit was worked out for the crafts the list asked for. If fewer units than that are listed under
     -- it, fewer crafts are bought and the odds need a lower price (less luck averaged out), so the limit is
     -- lowered until it fits the crafts that the units under it make. It only ever goes down.
+    local list, qty = active.list, active.qty or 1
+    local others = math.huge   -- the crafts the OTHER materials of the list allow, as far as their listings have been seen
+    if list then
+        for _, id in ipairs(list.order) do
+            local crafts = id ~= itemID and CraftsOf(list.materials[id], id) or nil
+            if crafts and crafts < others then others = crafts end
+        end
+    end
     if active.ev and active.opts then
         local held = F.Owned(itemID)
         for _ = 1, 25 do
-            local crafts = math.floor((held + math.min(depth.units, remaining)) / (active.qty or 1))
+            local crafts = math.min(math.floor((held + math.min(depth.units, remaining)) / qty), others)
             local tighter = (F.Calc.PlanCaps(active.ev, active.opts, crafts) or {})[active.index] or 0
             if tighter >= cap then break end
             cap = tighter
@@ -254,7 +293,25 @@ local function EvaluateDepth(itemID)
     -- (the key leaves out the number of price levels and the cost, so a ladder that is still filling in or a
     -- refresh that changes nothing says nothing again)
     local target = math.min(depth.units, remaining)
-    local key = target .. ":" .. cap .. ":" .. remaining
+    -- the crafts the units under the limit make; the list's fewest decides: a material that is plentiful is only bought for the crafts the scarcest
+    -- one allows (2 Murloc Eye and 1 Tender Crab Meat a craft: 108 eyes make 54 crafts, so 54 crab meat, not hundreds)
+    local held = F.Owned(itemID)
+    local craftsHere = math.floor((held + math.min(depth.units, remaining)) / qty)
+    local limitedBy
+    if list then
+        active.units, active.seenHeld = depth.units, held   -- (read by CraftsOf, for this material's turn as one of the others)
+        if others < craftsHere then
+            local byLimit = math.max(0, others * qty - held)
+            if byLimit < target then
+                target = byLimit
+                for _, id in ipairs(list.order) do
+                    if id ~= itemID and CraftsOf(list.materials[id], id) == others then limitedBy = id; break end
+                end
+            end
+        end
+    end
+    local key = target .. ":" .. cap .. ":" .. remaining .. ":" .. tostring(others < math.huge and others or "-")
+    active.target, active.units, active.others, active.heldSeen = target, depth.units, others < math.huge and others or nil, held
     if active.lastKey == key then return end
     active.lastKey = key
     local limit = F.Money(cap)
@@ -263,6 +320,7 @@ local function EvaluateDepth(itemID)
     if F.db.autoQuantity ~= false then
         local box = BuyQuantityBox(itemID)
         local shown = box and tonumber(box:GetText())
+        active.boxSeen, active.boxShown = box ~= nil, shown
         if target >= 1 then
             if shown and shown > target then
                 box:SetNumber(target)
@@ -272,20 +330,57 @@ local function EvaluateDepth(itemID)
             box:SetNumber(0)   -- nothing at or under the limit: the old quantity is no use (and is not left for a careless click); Auctionator's box takes a 0 (human, 2026-11-26)
             set = true
         end
+        if set and target >= 1 then EnforceQuantity(itemID, target, 3) end
     end
     -- Only what needs your attention gets a line: nothing under the limit, or fewer units than the quantity
     -- box would buy. When every unit still to buy is under the limit there is nothing to say.
     -- (a drop of a copper or two is not worth saying)
     local lowered = (active.cap - cap) / active.cap >= 0.02 and (" (limit lowered to " .. limit .. ")") or ""
     if remaining == 0 then
-        F.Print(string.format("%s: you already have the %d you asked for.", active.name, active.need))
+        F.Print(string.format("%s: already have the %d.", item, active.need))
     elseif depth.units == 0 then
-        F.Print(string.format("%s: none at or under %s%s%s.", active.name, limit,
+        F.Print(string.format("%s: none at or under %s%s%s.", item, limit,
             depth.cheapest and (" (cheapest " .. F.Money(depth.cheapest) .. ")") or "", set and "; quantity set to 0" or ""))
+    elseif limitedBy then
+        F.Print(string.format("%s: %d under %s, but %s allows only %d crafts - %s %d.", item, depth.units, limit,
+            F.ItemLink(limitedBy, list.materials[limitedBy] and list.materials[limitedBy].name), others, set and "quantity set to" or "set quantity to", target))
     elseif depth.units < remaining then
-        F.Print(string.format("%s: %d of %d under %s%s - %s %d.", active.name, depth.units, remaining, limit, lowered,
-            set and "quantity set to" or "set the quantity to", target))
+        F.Print(string.format("%s: %d of %d under %s%s - %s %d.", item, depth.units, remaining, limit, lowered,
+            set and "quantity set to" or "set quantity to", target))
     end
+    -- this material is now the one that decides the crafts: say what that means for the other materials of the list (their windows
+    -- may already have been seen, or are still to be opened)
+    if list and not limitedBy and craftsHere <= others and craftsHere < (list.announced or list.planned or math.huge) and craftsHere < (list.planned or math.huge) then
+        list.announced = craftsHere
+        local parts = {}
+        for _, id in ipairs(list.order) do
+            local e = list.materials[id]
+            if id ~= itemID and e then
+                local want = math.max(0, craftsHere * (e.qty or 1) - F.Owned(id))
+                if want < e.need then parts[#parts + 1] = want .. " " .. F.ItemLink(id, e.name) end
+            end
+        end
+        if #parts > 0 then
+            F.Print(string.format("%s allows only %d crafts: buy %s.", item, craftsHere, table.concat(parts, ", ")))
+        end
+    end
+end
+
+-- /dpp depth: what the last [A] list knows about each of its auction materials, to tell why a quantity box was or was not lowered.
+function F.DepthReport()
+    local lines, any = {}, false
+    for id, a in pairs(F.activeCaps) do
+        any = true
+        local list = a.list
+        local crafts = list and CraftsOf(a, id)
+        lines[#lines + 1] = string.format("%s: limit %s each, wanted %s, held at the list %s now %s; seen %dx%s; units under it %s, crafts it allows %s, others allow %s, target %s; buy window %s%s%s.",
+            F.ItemLink(id, a.name), F.Money(a.cap or 0), tostring(a.need), tostring(a.owned0), tostring(F.Owned(id)), a.evals or 0,
+            (a.evals or 0) == 0 and " (its listings have not been read: open its buy window)" or "", tostring(a.units), tostring(crafts), tostring(a.others or "-"), tostring(a.target),
+            a.boxSeen == nil and "not looked at" or (a.boxSeen and ("found, showed " .. tostring(a.boxShown)) or "NOT found"), a.reapplied and (", lowered again " .. a.reapplied .. "x") or "",
+            a.warned and ", listings unreadable" or "")
+    end
+    if not any then lines[1] = "no [A] list made yet this session." end
+    return lines
 end
 
 -- The game fires COMMODITY_SEARCH_RESULTS_UPDATED several times while a ladder loads and after every
@@ -316,6 +411,123 @@ function F.MaterialCap(plan, index, id)
     return cap
 end
 
+---------------------------------------------------------------------------
+-- TSM: the [T] button. TSM has no shopping-list API, but it replaces the game's ChatEdit_InsertLink and HandleModifiedItemClick with wrappers
+-- that, when no chat box takes the link, start a Browse search for that item in its auction window (TradeSkillMaster\LibTSMWoW\Source\API\Item.lua
+-- HookLink, App\AuctionUI\Core.lua ACTION_HANDLE_ITEM_LINKED -> Shopping ACTION_START_ITEM_SEARCH). Linking an item here is the same as a
+-- shift-click on it, so each press searches ONE material of the recipe: the next one at every press, and the chat line gives its quantity and the
+-- most to pay per unit (TSM's search has no limit of its own). Read from the installed TSM, UNVERIFIED in game (plans/addons/TSM-integration.md).
+---------------------------------------------------------------------------
+
+F.tsmCursor = {}   -- [recipe name] = the index of the material the next press searches
+
+-- The auction materials of a row, the way the [A] list works them out: { { id, name, need, cap }, ... } and the context (nil, ctx when no list
+-- could be made: ctx.why says why).
+function F.ShoppingMaterials(row)
+    local ctx = F.PlanShopping(row)
+    if ctx.why == "margin" or ctx.why == "budget" then return nil, ctx end
+    local plan = ctx.plan
+    local crafts = plan and plan.crafts or ctx.crafts
+    local list = {}
+    for index, line in ipairs(row.ev.reagents) do
+        local id = line.id
+        if id then
+            local need = math.ceil(line.qty * crafts - 1e-9) - F.Owned(id)
+            local _, source = F.UnitCost(id)
+            if need > 0 and source ~= "vendor" then
+                list[#list + 1] = { id = id, name = F.ItemMeta(id).name, need = need, cap = F.MaterialCap(plan, index, id) }
+            end
+        end
+    end
+    return list, ctx
+end
+
+-- "<item>/exact/<most per unit>/x<quantity>": TSM's filter for one material (LibTSMService\Source\Item\ItemFilter.lua: `exact`, a money string, `x<n>`);
+-- a Browse filter string holds several of them separated by ";" (LibTSMApp\Source\Shopping\Internal\FilterSearch.lua splits on it), so one search covers
+-- every material of the recipe. nil for a material without a name.
+local function TSMFilter(entry)
+    if not entry.name then return nil end
+    if entry.cap then
+        local gold, silver, copper = math.floor(entry.cap / 10000), math.floor(entry.cap % 10000 / 100), entry.cap % 100
+        local price = (gold > 0 and (gold .. "g") or "") .. (silver > 0 and (silver .. "s") or "") .. (copper > 0 and (copper .. "c") or "")
+        return entry.name .. "/exact/" .. price .. "/x" .. entry.need
+    end
+    return entry.name .. "/exact/x" .. entry.need
+end
+
+-- One press of [T]: searches the recipe's auction materials in TSM's Browse tab, all in one search with the price limit and the quantity of each (the
+-- filter is typed into TSM's search box for the player: Prices.lua TSMTypeAndSearch). When the box cannot be found (not on Browse, an unknown TSM
+-- language, a changed TSM) it falls back to linking one material, the next at every press, and prints its filter. Returns true when a search was started.
+function F.TSMSearch(row)
+    if not F.Prices.TSMAuctionVisible() then
+        F.Print("open TSM's auction window on its Browse tab first (it does the searching).")
+        return false
+    end
+    local list, ctx = F.ShoppingMaterials(row)
+    local craft = F.ItemLink(row.recipe and row.recipe.out or row.itemID, row.name)
+    if not list then
+        F.Print(ctx.why == "margin" and (craft .. " earns too little for the odds and margin: nothing to buy.") or (craft .. ": the budget is too small for the odds."))
+        return false
+    end
+    if #list == 0 then
+        F.Print("nothing to buy at the auction house for " .. craft .. ".")
+        return false
+    end
+    -- 1. typed: every material in one search
+    local parts, shown = {}, {}
+    for _, entry in ipairs(list) do
+        local filter = TSMFilter(entry)
+        if filter then
+            parts[#parts + 1] = filter
+            shown[#shown + 1] = string.format("%s x%d%s", F.ItemLink(entry.id, entry.name), entry.need, entry.cap and (" <= " .. F.Money(entry.cap)) or "")
+        end
+    end
+    if #parts > 0 then
+        local function Typed()
+            local ok, done, why = pcall(F.Prices.TSMTypeAndSearch, table.concat(parts, ";"))
+            if not ok then return false, tostring(done) end
+            return done, why
+        end
+        local done, why = Typed()
+        if not done then   -- on the results page: Exit Scan goes back to the search page, then try again
+            local ok, back = pcall(F.Prices.TSMExitScanButton)
+            if ok and back and type(back.Click) == "function" then
+                pcall(back.Click, back)
+                done, why = Typed()
+            end
+        end
+        if done then
+            F.Print("TSM: " .. table.concat(shown, ", "))
+            return true
+        end
+        F.tsmWhy = why   -- (/dpp tsmfind says it)
+    end
+    -- 2. linked: one material per press (TSM turns a linked item into a search when no chat box takes it)
+    if type(ChatEdit_GetActiveWindow) == "function" and ChatEdit_GetActiveWindow() ~= nil then
+        F.Print("close the chat box first: a linked item goes into it, not into the search.")
+        return false
+    end
+    local index = F.tsmCursor[row.name] or 1
+    if index > #list then index = 1 end
+    local entry = list[index]
+    local link
+    if F.Has(_G.C_Item, "GetItemInfo") then link = select(2, _G.C_Item.GetItemInfo(entry.id)) end
+    if not (F.String(link) and link:find("|Hitem:", 1, true)) then
+        F.Print((entry.name or ("item " .. entry.id)) .. ": the game has not loaded the item yet, press again in a moment.")
+        return false
+    end
+    if type(ChatEdit_InsertLink) ~= "function" then
+        F.Print("this client has no ChatEdit_InsertLink, so TSM cannot be asked to search.")
+        return false
+    end
+    F.tsmCursor[row.name] = index + 1
+    ChatEdit_InsertLink(link)
+    local filter = TSMFilter(entry)
+    F.Print(string.format("TSM %d/%d: %s - buy %d%s.%s", index, #list, link, entry.need, entry.cap and (" up to " .. F.Money(entry.cap) .. " each") or "",
+        filter and (" Or type: " .. filter) or "") .. (F.tsmWhy and (" (typing into TSM failed: " .. tostring(F.tsmWhy) .. ")") or ""))
+    return true
+end
+
 -- Returns how many search terms went into the list, or nil when no list could be made.
 function F.SendShoppingList(row)
     local api = AuctionatorAPI()
@@ -325,18 +537,22 @@ function F.SendShoppingList(row)
     end
     local ctx = F.PlanShopping(row)
     local plan = ctx.plan
+    local craft = F.ItemLink(row.recipe and row.recipe.out or row.itemID, row.name)   -- the finished item, as a link in the chat lines below
     if ctx.why == "margin" then
         F.Print(string.format("no list made for %s: no price for its auction materials gives %d%% odds of finishing ahead%s with a %d%% margin (the food earns too little). Lower the odds with /dpp odds or the margin with /dpp margin.",
-            row.name, ctx.odds, ctx.fill and "" or (" over " .. ctx.crafts .. " crafts"), ctx.margin))
+            craft, ctx.odds, ctx.fill and "" or (" over " .. ctx.crafts .. " crafts"), ctx.margin))
         return 0
     elseif ctx.why == "budget" then
         F.Print(string.format("no list made for %s: your budget (%s) cannot buy even the fewest crafts that give %d%% odds (that needs about %s).",
-            row.name, ctx.budget and F.Money(ctx.budget) or "none", ctx.odds, F.Money(ctx.extra or 0)))
+            craft, ctx.budget and F.Money(ctx.budget) or "none", ctx.odds, F.Money(ctx.extra or 0)))
         return 0
     end
     local crafts = plan and plan.crafts or ctx.crafts
 
     local terms, vendor, enough, unnamed, caps = {}, {}, {}, 0, {}
+    -- what the auction house lets this list buy, shared by its materials (EvaluateDepth): crafts need ALL their materials, so the one with
+    -- the fewest units under its limit decides how many of every other one is worth buying
+    local listState = { crafts = {}, materials = {}, order = {}, planned = crafts }
     for index, line in ipairs(row.ev.reagents) do
         local id = line.id
         local name = id and F.ItemMeta(id).name or nil
@@ -345,18 +561,20 @@ function F.SendShoppingList(row)
         if not id then
             unnamed = unnamed + 1
         elseif need <= 0 then
-            enough[#enough + 1] = name or ("item " .. id)
+            enough[#enough + 1] = F.ItemLink(id, name)
         elseif not name then
             unnamed = unnamed + 1            -- the game has not loaded its name yet
         elseif source == "vendor" then
-            vendor[#vendor + 1] = need .. "x " .. name
+            vendor[#vendor + 1] = need .. "x " .. F.ItemLink(id, name)
         else
             local cap = F.MaterialCap(plan, index, id)
             terms[#terms + 1] = SearchString(api, name, need, cap)
-            caps[#caps + 1] = { name = name, need = need, cap = cap, unit = line.unit }
+            caps[#caps + 1] = { name = name, id = id, need = need, cap = cap, unit = line.unit }
             if cap then   -- what the buy-depth check (F.OnCommoditySearch) needs, including the rules to tighten the limit
-                F.activeCaps[id] = { cap = cap, need = need, name = name, owned0 = F.Owned(id),
-                    ev = row.ev, opts = ctx.opts, index = index, qty = line.qty }
+                F.activeCaps[id] = { cap = cap, need = need, name = name, craft = craft, owned0 = F.Owned(id),
+                    ev = row.ev, opts = ctx.opts, index = index, qty = line.qty, list = listState }
+                listState.materials[id] = F.activeCaps[id]
+                listState.order[#listState.order + 1] = id
             end
         end
     end
@@ -370,7 +588,7 @@ function F.SendShoppingList(row)
             -- Say which setting made the number: a fixed "Buy for" counts what is held toward it and stops there;
             -- Max (fill the budget) only gets here when the budget itself is spent.
             local fixed = F.Integer(F.db.buyCrafts, 1, 100000) and F.db.buyCrafts or nil
-            F.Print("nothing to buy: you already hold enough for " .. crafts .. " crafts of " .. row.name
+            F.Print("nothing to buy: you already hold enough for " .. crafts .. " crafts of " .. craft
                 .. (fixed and (". \"Buy for\" is set to " .. fixed .. " crafts: tick Max in the window (or /dpp buy max) to keep buying within your limits.")
                     or (ctx.fill and " (the most your budget buys within the price limits)." or ".")))
         end
@@ -397,22 +615,24 @@ function F.SendShoppingList(row)
     -- One line for the list (the rest is in the [A] tooltip), and one more only if something was left out.
     local bits, below = {}, false
     for _, entry in ipairs(caps) do
-        bits[#bits + 1] = entry.name .. (entry.cap and (" up to " .. F.Money(entry.cap)) or "")
+        bits[#bits + 1] = F.ItemLink(entry.id, entry.name) .. (entry.cap and (" up to " .. F.Money(entry.cap)) or "")
         if entry.cap and entry.unit and entry.cap < entry.unit then below = true end
     end
-    local line = string.format("%s: %s for %d crafts", listName, table.concat(bits, ", "), crafts)
+    -- one short line: the finished item, how many crafts, the most it can cost, then each material with its price limit.
+    -- (with no fixed number of crafts the wanted count is only "as many as possible" (100000): the budget cut it, which is all the line says)
+    local count = (plan and plan.limitedBy and not ctx.fill) and string.format("%d of %d", crafts, plan.wanted) or tostring(crafts)
+    local line
     if plan then
-        line = line .. " (at most " .. F.Money(plan.spend)
-            .. (plan.limitedBy and string.format(", cut from %d crafts by your budget", plan.wanted) or "") .. ")"
-        if below then line = line .. " |cffff6666Limit is below today's price: nothing may be listed that cheap.|r" end
+        line = string.format("%s for %s crafts, max %s%s: %s", craft, count, F.Money(plan.spend), plan.limitedBy and " (budget)" or "", table.concat(bits, ", "))
+        if below then line = line .. " |cffff6666Limit below today's price.|r" end
     else
-        line = line .. " (no price limit: a material has no price yet)"
+        line = string.format("%s for %s crafts, no price limit (a price is missing): %s", craft, count, table.concat(bits, ", "))
     end
     F.Print(line)
     local left = {}
-    if #vendor > 0 then left[#left + 1] = "from a vendor " .. table.concat(vendor, ", ") end
-    if #enough > 0 then left[#left + 1] = "already held " .. table.concat(enough, ", ") end
-    if unnamed > 0 then left[#left + 1] = unnamed .. " not loaded yet (click again)" end
+    if #vendor > 0 then left[#left + 1] = "vendor " .. table.concat(vendor, ", ") end
+    if #enough > 0 then left[#left + 1] = "held " .. table.concat(enough, ", ") end
+    if unnamed > 0 then left[#left + 1] = unnamed .. " not loaded" end
     if #left > 0 then print("  Left out: " .. table.concat(left, "; ") .. ".") end
     return #terms
 end

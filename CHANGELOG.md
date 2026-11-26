@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.46.0
+- **TradeSkillMaster (TSM) support.** Prices come from TSM or Auctionator. With both loaded TSM is used first and Auctionator is the backup for an item TSM has no price for; a small **Prices: TSM / Auctionator** button in the footer (only shown with both) switches which is first. `/dpp prices auto|auctionator|tsm`, `/dpp tsmsource <TSM price source>` (default `DBMinBuyout`).
+- **The row button reads `T` while TSM is first, `A` when Auctionator is first.**
+  - `T` types one search into TSM's Browse box for every material of the recipe, with each price limit and quantity (`Clam Meat/exact/57c/x175;Murloc Fin/exact/5s/x350`); TSM then opens the buy dialog already set to that quantity.
+  - It brings TSM's window up first if the game's auction window is showing, and `A` switches back to the game's window before making its list.
+  - With TSM only it is greyed out until TSM's auction window is open.
+- With TSM only: the disenchant value of gear results uses TSM's Destroy value, the Enchanting tab says it needs Auctionator and points to TSM's Disenchant search, and TSM prices show no age. `/dpp tsmfind` shows what `T` can see of TSM's windows.
+- **`[A]` lists:**
+  - The scarcest material decides how many of the others to buy (2 Murloc Eye + 1 Tender Crab Meat: 108 eyes means 54 crab meat, not hundreds); the quantity box is lowered again if Auctionator resets it. `/dpp depth` says what the last list read.
+  - Chat lines are shorter and name items as links; "cut from 100000 crafts" is now "(budget)".
+- Prices and hovers say "AH price" instead of "Auctionator price".
+
 ## 0.45.0
 - **Engineering and Tailoring catalogs.** Untick **Known recipes** to list the recipes you have not learned: 198 Engineering, 380 Tailoring. Each shows its source (trainer, vendor, quest, drop), bind type and materials. Vendors are named per side and can be pinned on the map with Ctrl-click (Mount Hyjal and the Skyborn zone included).
 - Cooking recipes that cannot be had yet say so: Winter Veil (Egg Nog, Gingerbread Cookie), summer fish (Hot Smoked Bass), Ahn'Qiraj (Dirge's Kickin' Chimaerok Chops).

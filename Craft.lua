@@ -174,11 +174,7 @@ end
 
 -- The made item as a clickable link ([Item] in chat), else its name.
 local function ItemText(best)   -- (best: any { out, name } entry)
-    if F.Has(_G.C_Item, "GetItemInfo") and F.Integer(best.out, 1, MAX) then
-        local _, link = _G.C_Item.GetItemInfo(best.out)
-        if F.String(link) and link ~= "" then return link end
-    end
-    return best.name
+    return F.ItemLink(best.out, best.name)
 end
 
 -- What one craft sells for, whatever the panel's sell mode is (a mode only changes the profit the recipes are ranked by): to a vendor, or

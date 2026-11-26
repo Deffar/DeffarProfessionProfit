@@ -314,6 +314,10 @@ function D.ValueOf(itemID)
     local meta = F.ItemMeta(itemID)
     if meta.class == nil or meta.quality == nil then return nil end
     if not (GEAR[meta.class] and meta.quality >= GOOD and meta.quality <= EPIC) or D.Blocked(itemID, meta.name) then return 0 end
+    if F.Prices.TSMLoaded() and not F.Prices.AuctionatorLoaded() then   -- no Auctionator: TSM's own disenchant value (its "Destroy" price source), before the auction house cut
+        local gross = F.Prices.DestroyValue(itemID)
+        return gross and math.floor(gross * (1 - F.AH_CUT)) or 0
+    end
     local bracket = D.Bracket(itemID)
     if not bracket then return nil end   -- (the link's item level may not be known yet)
     return math.floor(D.Gross(bracket, MakeUnit()) * (1 - F.AH_CUT))

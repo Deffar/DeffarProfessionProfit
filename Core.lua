@@ -60,6 +60,8 @@ local function Initialize()
             saved.minProfitCopper = (F.Integer(saved.minProfit, 0, 1000000) and saved.minProfit or 1) * 100
         end
         if type(saved.marginOnly) ~= "boolean" then saved.marginOnly = true end   -- the Enchanting tab lists only items that return the Margin
+        if saved.ahAddon ~= "auctionator" and saved.ahAddon ~= "tsm" then saved.ahAddon = "auto" end   -- which addon the prices come from (Prices.lua)
+        if not (type(saved.tsmSource) == "string" and saved.tsmSource:match("^[%a][%w]*$") and #saved.tsmSource <= 40) then saved.tsmSource = nil end
         if not F.Integer(saved.deQuality, 2, 4) then saved.deQuality = nil end   -- the Enchanting tab's Quality and Level dropdowns, kept between sessions
         if not (type(saved.deRange) == "string" and saved.deRange:match("^%d+%-%d+$")) then saved.deRange = nil end
         if type(saved.sellAH) ~= "boolean" then saved.sellAH = false end   -- profit from selling at the auction house instead of to a vendor
@@ -300,14 +302,24 @@ driver:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4)
         end
         return
     end
-    if event == "AUCTION_HOUSE_SHOW" then F.Bought.Snapshot(); F.HookAuctionator(); F.Bought.HookBids(); F.Sales.Hook(); F.Disenchant.ListenScans(); return end
+    if event == "AUCTION_HOUSE_SHOW" then
+        F.Bought.Snapshot(); F.HookAuctionator(); F.Bought.HookBids(); F.Sales.Hook(); F.Disenchant.ListenScans()
+        if F.Prices.TSMLoaded() then   -- the T buttons follow TSM's auction window, which shows a moment after the game's event
+            Later("tsmwindow", 0.5, RefreshWindow)
+            Later("tsmwindow2", 1.5, RefreshWindow)
+        end
+        return
+    end
     -- the AH sales tab (Sales.lua): a post going through or failing, and the mailbox
     if event == "AUCTION_HOUSE_AUCTION_CREATED" then F.Sales.OnCreated(arg1); return end
     if event == "AUCTION_MULTISELL_FAILURE" then F.Sales.OnFailed(event); return end
     if event == "MAIL_SHOW" then F.Sales.Hook(); F.Sales.OnInboxChanged(); return end
     if event == "MAIL_INBOX_UPDATE" or event == "MAIL_CLOSED" then F.Sales.OnInboxChanged(); return end
     if event == "AUCTION_HOUSE_PURCHASE_COMPLETED" then F.Bought.OnPurchaseCompleted(arg1); return end   -- gear: what was paid (Bought.lua)
-    if event == "AUCTION_HOUSE_CLOSED" then return end   -- (the Enchanting list is not rebuilt by itself: the Refresh button does it)
+    if event == "AUCTION_HOUSE_CLOSED" then
+        if F.Prices.TSMLoaded() then Later("tsmwindow", 0.5, RefreshWindow) end   -- (the T buttons grey out again)
+        return
+    end   -- (the Enchanting list is not rebuilt by itself: the Refresh button does it)
     if event == F.Bought.EVENT then OnAuctionPurchase(arg1, arg2); return end
     if event == "COMMODITY_SEARCH_RESULTS_UPDATED" then F.OnCommoditySearch(arg1); return end
     -- the vendor "+" button (Vendor.lua): open/closed state at once, the button itself a moment later
@@ -355,6 +367,8 @@ local function Status()
     F.Print("version " .. F.VERSION .. ".")
     F.Print(F.AuctionatorLoaded() and ("Auctionator: loaded" .. (F.priceHooked and ", the window redraws when it learns new prices." or ", price updates are not being watched yet (open the window or the auction house)."))
         or "Auctionator: not loaded (vendor prices you have seen are used).")
+    F.Print("TradeSkillMaster: " .. (F.Prices.TSMLoaded() and ("loaded, price source " .. F.Prices.TSMSource() .. " (then " .. table.concat(F.Prices.TSM_SOURCES, ", ") .. ")") or "not loaded")
+        .. ". Prices come from: " .. (F.Prices.Name() or "no addon") .. " (choice: " .. tostring(F.db.ahAddon or "auto") .. ").")
     F.Print("Enchanting [A] search: " .. (F.Disenchant.abortGuard and "leaving the auction house page does not remove an item from the list."
         or "not watching for aborted searches yet (press [A] on a row with the auction house open)."))
     local live, reason = F.ReadRank()
@@ -443,6 +457,8 @@ local function Help()
     print("  /dpp bags 0-20 - the bag slots the vendor + button keeps free (now " .. (F.db.bagReserve or 2) .. ")")
     print("  /dpp autosearch on|off - [A] opens Auctionator's Shopping tab and searches the new list (now " .. (F.db.autoSearch ~= false and "on" or "off") .. ")")
     print("  /dpp autoqty on|off - lower Auctionator's buy quantity to the units under the price limit (now " .. (F.db.autoQuantity ~= false and "on" or "off") .. ")")
+    print("  /dpp prices auto|auctionator|tsm - which addon the auction house prices come from (now " .. (F.Prices.Name() or "none") .. "); /dpp tsmsource <TSM price source> (now " .. F.Prices.TSMSource() .. ")")
+    print("  /dpp depth - what the last [A] list read from the auction house for each material, and why a quantity was or was not lowered")
     print("  /dpp why <item name or id> - why the Enchanting list does or does not hold an item (price age, gone mark, data, value, filters)")
     print("  /dpp margin 0-999 - the least profit on cost (percent) that [A]'s price limits leave (now " .. F.db.margin .. "%)")
     print("  /dpp budget <gold>|all - the most [A]'s lists may cost (now " .. (F.db.budget and (F.db.budget .. " gold") or "all your gold") .. ")")
@@ -536,6 +552,31 @@ SlashCmdList.DEFFARPROFESSIONPROFIT = function(message)
             F.Print("the [A] button's price limits now leave at least " .. number .. "% margin on cost.")
             if F.UI.IsShown() then F.UI.Refresh() end
         end
+    elseif command == "prices" then
+        if argument == "auto" or argument == "auctionator" or argument == "tsm" then
+            F.db.ahAddon = argument
+            F.Print("prices now come from " .. (F.Prices.Name() or "no addon") .. " (choice: " .. argument .. ").")
+            if F.UI.IsShown() then F.UI.Refresh() end
+        else
+            F.Print("usage: /dpp prices auto|auctionator|tsm (now " .. tostring(F.db.ahAddon or "auto") .. ": " .. (F.Prices.Name() or "no price addon") .. "). Auctionator is used first when both are loaded.")
+        end
+    elseif command == "tsmsource" then
+        local source = argument ~= "" and (message or ""):match("^%s*%S+%s+(%S+)") or nil   -- (the case the player typed: the sources are case sensitive)
+        if source and source:match("^[%a][%w]*$") and #source <= 40 then
+            F.db.tsmSource = source
+            F.Print("TSM price source: " .. source .. " (" .. table.concat(F.Prices.TSM_SOURCES, ", ") .. " are tried when it has no value).")
+            if F.UI.IsShown() then F.UI.Refresh() end
+        else
+            F.Print("usage: /dpp tsmsource DBMinBuyout|DBMarket|AHDBMinBuyout|... (now " .. F.Prices.TSMSource() .. ")")
+        end
+    elseif command == "tsmfind" then   -- what the T button can see of TSM's windows
+        F.Print("TSM loaded: " .. tostring(F.Prices.TSMLoaded()) .. ", its auction window open: " .. tostring(F.Prices.TSMAuctionVisible()) .. ".")
+        F.Print("Browse search box (hint \"" .. F.Prices.TSM_BROWSE_HINT .. "\"): " .. (F.Prices.TSMBrowseBox() and "found" or "not found (not on Browse's search page?)")
+            .. ". Exit Scan button: " .. (F.Prices.TSMExitScanButton() and "found" or "not found") .. ".")
+        for _, line in ipairs(F.Prices.TSMDescribeBoxes()) do F.Print(line) end
+        F.Print("The last T press: " .. (F.tsmWhy and ("typing failed (" .. tostring(F.tsmWhy) .. "), the item was linked instead.") or "no failure recorded."))
+    elseif command == "depth" then
+        for _, line in ipairs(F.DepthReport()) do F.Print(line) end
     elseif command == "why" then
         for _, line in ipairs(F.Disenchant.Why(argument)) do F.Print(line) end
     elseif command == "budget" then

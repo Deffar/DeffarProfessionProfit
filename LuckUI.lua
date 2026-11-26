@@ -237,9 +237,15 @@ local function ShowTip(row, refresh)
     end
     if proc then
         Line(tip, "Makes per craft", Paint(SAGE, tostring(item.y)))
-        for rank = 0, F.RANK_MAX do
-            local r = item.ranks[rank]
-            if r then Line(tip, string.format("Master Chef %d/%d", rank, F.RANK_MAX), Crafts(r.c) .. Grey(", ") .. Paint(SAGE, r.x .. " extra")) end
+        Line(tip, "Crafts", Paint(SAND, tostring(item.c)))
+        Line(tip, "Extras", Paint(SAGE, tostring(item.x)))
+        local used = 0
+        for rank = 0, F.RANK_MAX do if item.ranks[rank] then used = used + 1 end end
+        if used > 1 then   -- (crafted at more than one rank: how each rank went)
+            for rank = 0, F.RANK_MAX do
+                local r = item.ranks[rank]
+                if r then Line(tip, string.format("Master Chef %d/%d", rank, F.RANK_MAX), Crafts(r.c) .. Grey(", ") .. Paint(SAGE, r.x .. " extra")) end
+            end
         end
         if item.o > 0 then Note(tip, item.o .. " odd-quantity crafts left out") end
     else
@@ -303,13 +309,7 @@ local function ShowProfitTip(row, refresh)
         end
         Line(tip, Grey("Materials: ") .. Crafts(item.k) .. Grey(" x ") .. F.Money(math.floor(item.s / item.k)), F.Money(item.s))
         Line(tip, "Profit", Signed(profit))
-        if F.PROFESSIONS[prof].proc and not view then Line(tip, "At average luck", Signed(item.e - item.s)) end
-        if item.secs and item.secs > 0 then
-            tip:AddLine(" ")
-            Line(tip, Grey("Casting: ") .. Crafts(item.k) .. Grey(" x ") .. Seconds(string.format("%.1f s", item.sec)) .. (item.secFrom == "default" and Grey(" (assumed)") or item.secFrom == "scaled" and Grey(" (estimated)") or ""),
-                Seconds(string.format("%d s", math.floor(item.secs + 0.5))))
-            Line(tip, "Per hour of casting", Signed(profit * 3600 / item.secs))
-        end
+        if item.secs and item.secs > 0 then Line(tip, "Per hour", Signed(profit * 3600 / item.secs)) end
     else
         tip:AddLine("No money figures: no price or vendor sale", DIM[1], DIM[2], DIM[3], true)
     end
@@ -317,7 +317,12 @@ local function ShowProfitTip(row, refresh)
     -- counted before lots were kept, the recipe with the price the next unit would be counted at
     local char = F.Char()
     local recipe = char and (F.RecipesOf(char, prof) or {})[item.id]
-    if type(item.mats) == "table" and next(item.mats) ~= nil then
+    local shift = type(IsShiftKeyDown) == "function" and IsShiftKeyDown() == true
+    local hasMaterials = (type(item.mats) == "table" and next(item.mats) ~= nil)
+        or (not item.ah and type(recipe) == "table" and type(recipe.r) == "table" and #recipe.r > 0)
+    if hasMaterials and not shift then
+        St.Hint(tip, "Shift: Materials used")   -- (the list of what the crafts used is shown while Shift is held)
+    elseif type(item.mats) == "table" and next(item.mats) ~= nil then
         tip:AddLine(" ")
         tip:AddLine("Materials used (oldest purchases first)", DIM[1], DIM[2], DIM[3])
         local ids = {}
@@ -640,6 +645,21 @@ function U.Detail()   -- (tests) the open panel as text, or nil
     return frame.detail.shownData
 end
 
+-- A tooltip open on a row is rebuilt with the new counts (a craft was just counted) instead of being closed or left stale by the redraw;
+-- the row under the mouse may now hold another item after a re-sort. One whose row is gone is closed. Also run when Shift is pressed or
+-- released: the Profit tooltip shows the materials only while it is held.
+local function RedoTips()
+    for _, row in ipairs(rows) do
+        local over = row.tipHover == true   -- (the pointer is on the item column or the Profit cell)
+        if row:IsShown() and row.item then
+            if over then (row.tipKind == "profit" and ShowProfitTip or ShowTip)(row, true) end
+        elseif row.tipHover and type(GameTooltip) == "table" and F.Has(GameTooltip, "IsOwned") and GameTooltip:IsOwned(row) then
+            row.tipHover = false
+            GameTooltip:Hide()
+        end
+    end
+end
+
 function U.Refresh()
     if not frame or not frame:IsShown() then return end
     local visible = F.VisibleTabs(HasLuck, F.LUCK_TABS)
@@ -835,18 +855,7 @@ function U.Refresh()
     -- the main window is as tall as this one: when this one needs more than the main window last measured, the main window is laid out again
     if F.UI and F.UI.IsShown() and F.UI.Frame() and F.UI.Frame():GetHeight() ~= tall then F.UI.Refresh() end
 
-    -- A tooltip open on a row is rebuilt with the new counts (a craft was just counted) instead of being closed
-    -- or left stale by the redraw; the row under the mouse may now hold another item after a re-sort. One whose
-    -- row is gone is closed.
-    for _, row in ipairs(rows) do
-        local over = row.tipHover == true   -- (the pointer is on the item column or the Profit cell)
-        if row:IsShown() and row.item then
-            if over then (row.tipKind == "profit" and ShowProfitTip or ShowTip)(row, true) end
-        elseif row.tipHover and type(GameTooltip) == "table" and F.Has(GameTooltip, "IsOwned") and GameTooltip:IsOwned(row) then
-            row.tipHover = false
-            GameTooltip:Hide()
-        end
-    end
+    RedoTips()
 end
 
 function U.Row(index) return rows[index] end   -- (tests)
@@ -1017,7 +1026,7 @@ local function EditBox(parent, width, numeric)
     if numeric then box:SetNumeric(true) end
     box:SetMaxLetters(numeric and 6 or 16)
     box:SetTextInsets(5, 5, 0, 0)
-    box:SetScript("OnEditFocusGained", function(self) for _, edge in ipairs(self.edges) do W.Color(edge, W.GOLD) end end)
+    box:SetScript("OnEditFocusGained", function(self) for _, edge in ipairs(self.edges) do W.Color(edge, W.GOLD) end; self:HighlightText() end)   -- (a click selects it all)
     box:SetScript("OnEditFocusLost", function(self) for _, edge in ipairs(self.edges) do W.Color(edge, { 0.34, 0.34, 0.37 }) end end)
     box:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
     return box
@@ -1027,6 +1036,8 @@ local function Build()
     frame = CreateFrame("Frame", "DeffarProfessionProfitLuckFrame", UIParent)
     frame:SetSize(WIDTH, 360)
     frame:SetFrameStrata("DIALOG")
+    frame:RegisterEvent("MODIFIER_STATE_CHANGED")   -- Shift pressed or released over a Profit cell: its tooltip is redrawn
+    frame:SetScript("OnEvent", function() RedoTips() end)
     frame:SetToplevel(true)
     frame:SetClampedToScreen(true)
     frame:SetMovable(true)
@@ -1143,8 +1154,11 @@ local function Build()
     frame.searchLabel:SetText("Search:")
     frame.searchBox = EditBox(frame, 150, false)
     frame.searchBox:SetMaxLetters(40)
+    frame.searchBox:SetTextInsets(5, 18, 0, 0)   -- (room for the x at the right)
+    W.AddClear(frame.searchBox)
     frame.searchBox:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -SIDE, -(FILTER_Y + 1))
     frame.searchBox:SetScript("OnTextChanged", function(self)
+        W.ClearShown(self)
         search = (self:GetText() or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
         page = 1
         U.Refresh()

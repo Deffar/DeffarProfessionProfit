@@ -19,7 +19,7 @@ jobs:
       - name: Build the addon zip
         run: |
           mkdir DeffarProfessionProfit
-          cp ./*.lua ./*.toc DeffarProfessionProfit/
+          cp ./*.lua ./*.toc ./*.tga ./CHANGELOG.md DeffarProfessionProfit/
           zip -r DeffarProfessionProfit.zip DeffarProfessionProfit
 
       - name: Create the release

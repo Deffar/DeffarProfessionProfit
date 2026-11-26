@@ -459,6 +459,7 @@ function V.Buy()
         return false, "empty"
     end
     V.run = { rows = plan.rows, position = 1, spent = 0 }
+    V.Refresh()   -- greyed out while it buys
     Continue(V.run)
     return true
 end
@@ -486,7 +487,9 @@ local function Tip(button)
     GameTooltip:ClearLines()
     S.StartRules()
     S.Title(GameTooltip, "Buy materials")
-    if not plan or #plan.rows == 0 then
+    if V.run then
+        S.Reason(GameTooltip, "Buying...")
+    elseif not plan or #plan.rows == 0 then
         if plan and plan.selected then S.Reason(GameTooltip, "For " .. plan.selected) end
         local lines = IdleLines(plan)
         for _, line in ipairs(lines) do S.Reason(GameTooltip, line) end
@@ -562,8 +565,9 @@ function V.Refresh()
     local button = V.EnsureButton()
     if not button then return end
     -- always there while a vendor is open: a golden border when it sells a material of your recipes, greyed out when it does not
-    button:SetShown(not V.run)
-    F.UI.W.SetReady(button, V.Relevant())
+    -- and while a purchase is running (it stays, it is not hidden)
+    button:Show()
+    F.UI.W.SetReady(button, not V.run and V.Relevant())
 end
 
 function V.OnMerchantShow()

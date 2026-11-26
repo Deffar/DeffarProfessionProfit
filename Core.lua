@@ -6,13 +6,13 @@
 -- whenever a profession window lists them, vendor buy prices whenever a merchant window is open.
 --
 -- SavedVariables: DeffarProfessionProfitDB, account-wide, schema version 1:
---   version, crafts (1-100000, the crafts used for the tooltip's range), sort / sortDesc, ownedFree,
+--   version, sort / sortDesc, ownedFree,
 --   profitOnly, showAH (booleans), rankOverride (0-5 or absent = read from the game), left/top
 --   (window position, optional), cookingLine (the Cooking skill line the Cooking window reported, optional),
 --   vendorBuy[itemID] = { c = copper per unit, t = time seen, l = limited stock? },
 --   chars["Full Name"] = { recipes = { [recipeID] = { name, out, qMin, qMax, r = { { qty, ids } } } },
 --                          rank = { value, seen }, cast = { [recipeID] = seconds one cast took } }.
---   odds (50-99, default 90: the chance of finishing ahead the [A] button's price limits aim for), margin (0-100,
+--   odds (50-99, default 90: the chance of finishing ahead the [A] button's price limits aim for), margin (0-999,
 --   default 10: the least profit on cost, in percent, those limits leave), budget
 --   (gold, 1-100000000, or absent = all the character's gold: the most an [A] list may cost; Shopping.lua),
 --   bought[itemID] = { n = units, c = copper paid, p = last unit price, t = time } (auction purchases, Bought.lua),
@@ -23,7 +23,7 @@
 -- is keyed by the full character name only, no realm.
 local addonName, F = ...
 
-local DEFAULTS = { version = 1, crafts = 100, sort = "profit", sortDesc = true,
+local DEFAULTS = { version = 1, sort = "profit", sortDesc = true,
     ownedFree = false, profitOnly = false, showAH = false, odds = 90, margin = 10 }
 local LUCK_SORT_KEYS = { item = true, c = true, x = true, exp = true, real = true, luck = true, spent = true,
     gained = true, profit = true, hour = true }   -- the /dpp luck column headings (LuckUI.lua)
@@ -39,20 +39,19 @@ local function Initialize()
     if type(saved) == "table" and type(saved.version) == "number" and saved.version > DEFAULTS.version then
         -- Saved by a newer version of this addon: defaults in memory, never overwrite it.
         F.readOnly = true
-        F.db = { version = DEFAULTS.version, crafts = DEFAULTS.crafts, sort = DEFAULTS.sort, sortDesc = true,
+        F.db = { version = DEFAULTS.version, sort = DEFAULTS.sort, sortDesc = true,
             ownedFree = false, profitOnly = false, marginOnly = true, minProfitCopper = 100, minOdds = 30, maxAge = 1, showAH = false, sellAH = false, odds = DEFAULTS.odds, margin = DEFAULTS.margin, autoQuantity = true, bagReserve = 2, autoSearch = true, vendorBuy = {}, chars = {}, luck = {}, bought = {}, items = {} }
     else
         if type(saved) ~= "table" then saved = {} end
         _G.DeffarProfessionProfitDB = saved
         saved.version = DEFAULTS.version
-        if not F.Integer(saved.crafts, 1, 100000) then saved.crafts = DEFAULTS.crafts end
+        saved.crafts, saved.craftTime = nil, nil   -- (two settings that are gone: /dpp crafts and /dpp crafttime)
         if type(saved.sort) ~= "string" or not SORT_KEYS[saved.sort] then saved.sort = DEFAULTS.sort end
         if type(saved.sortDesc) ~= "boolean" then saved.sortDesc = DEFAULTS.sortDesc end
         if type(saved.ownedFree) ~= "boolean" then saved.ownedFree = DEFAULTS.ownedFree end
         if type(saved.profitOnly) ~= "boolean" then saved.profitOnly = DEFAULTS.profitOnly end
         if type(saved.showAH) ~= "boolean" then saved.showAH = DEFAULTS.showAH end
         if not F.Integer(saved.maxAge, 0, 99) then saved.maxAge = 1 end   -- days: the oldest price the Enchanting list trusts
-        if type(saved.craftTime) ~= "boolean" then saved.craftTime = true end   -- print the time of a Create All
         if type(saved.noDisenchant) ~= "table" then saved.noDisenchant = {} end   -- items the player says cannot be disenchanted
         if type(saved.gone) ~= "table" then saved.gone = {} end            -- items searched for and not found (Disenchant.lua)
         if not F.Integer(saved.minOdds, 0, 100) then saved.minOdds = 30 end   -- percent: the least chance one disenchant must pay
@@ -61,12 +60,14 @@ local function Initialize()
             saved.minProfitCopper = (F.Integer(saved.minProfit, 0, 1000000) and saved.minProfit or 1) * 100
         end
         if type(saved.marginOnly) ~= "boolean" then saved.marginOnly = true end   -- the Enchanting tab lists only items that return the Margin
+        if not F.Integer(saved.deQuality, 2, 4) then saved.deQuality = nil end   -- the Enchanting tab's Quality and Level dropdowns, kept between sessions
+        if not (type(saved.deRange) == "string" and saved.deRange:match("^%d+%-%d+$")) then saved.deRange = nil end
         if type(saved.sellAH) ~= "boolean" then saved.sellAH = false end   -- profit from selling at the auction house instead of to a vendor
         if type(saved.sellDE) ~= "boolean" then saved.sellDE = false end   -- profit from disenchanting the result (needs Enchanting)
         if saved.sellAH and saved.sellDE then saved.sellDE = false end    -- one basis at a time
         if not F.Integer(saved.rankOverride, 0, F.RANK_MAX) then saved.rankOverride = nil end
         if not F.Integer(saved.odds, 50, 99) then saved.odds = DEFAULTS.odds end
-        if not F.Integer(saved.margin, 0, 100) then saved.margin = DEFAULTS.margin end
+        if not F.Integer(saved.margin, 0, 999) then saved.margin = DEFAULTS.margin end
         if not F.Integer(saved.buyCrafts, 1, 100000) then saved.buyCrafts = nil end   -- absent: as many crafts as the budget allows
         if type(saved.autoQuantity) ~= "boolean" then saved.autoQuantity = true end
         if not F.Integer(saved.bagReserve, 0, 20) then saved.bagReserve = 2 end
@@ -88,6 +89,7 @@ local function Initialize()
         if not F.Number(saved.minimapAngle) then saved.minimapAngle = nil end   -- the minimap button's place, in degrees (Minimap.lua)
         if type(saved.minimapHidden) ~= "boolean" then saved.minimapHidden = false end
         if type(saved.vendorBuy) ~= "table" then saved.vendorBuy = {} end
+        if type(saved.recipeSeen) ~= "table" then saved.recipeSeen = {} end   -- each recipe as last read from the game: a hotfix to one is reported (Data.lua F.RecipeChanges)
         if type(saved.chars) ~= "table" then saved.chars = {} end
         if type(saved.luck) ~= "table" then saved.luck = {} end
         if type(saved.bought) ~= "table" then saved.bought = {} end
@@ -142,16 +144,14 @@ end
 -- that call lets the window redraw by itself a moment after new prices arrive instead of waiting to be reopened.
 -- The redraw is debounced: a full scan writes thousands of prices in a burst.
 -- One redraw for a burst of price writes. The Enchanting tab is redrawn less often (3 s: its numbers are rewritten for every
--- row), and once the writes have stopped after a scan (300 or more of them) its list is rebuilt, so the new bargains appear and
--- the sold ones go; during a search or a scan the rows themselves stay where they are (Disenchant.lua).
+-- row); the rows themselves stay where they are (Disenchant.lua): new bargains come with the Refresh button.
 local lastBurst = 0
 local function PriceTick()
     local d = F.Disenchant
     local growing = d.burst ~= lastBurst
     lastBurst = d.burst
     if not growing then
-        if d.burst >= 300 then d.Invalidate() end
-        d.burst, lastBurst = 0, 0
+        d.burst, lastBurst = 0, 0   -- (no rebuild after a burst: searching or scrolling the auction house writes thousands of prices, and the list changes only on Refresh; the rows' numbers update in place)
     end
     RefreshWindow()
     if growing and F.UI.IsShown() then Later("prices", F.Tab() == "enchanting" and 3 or 0.5, PriceTick) end   -- look again once it is quiet
@@ -177,6 +177,13 @@ end
 local function CacheNow()
     local result, reason = F.CacheRecipes()
     F.lastRecipeScan = result or { failed = reason }
+    -- a recipe the game now gives differently from the last time (a hotfix): said once in the chat
+    if result and result.changes then
+        for index, change in ipairs(result.changes) do
+            if index > 5 then F.Print((#result.changes - 5) .. " more recipe(s) changed."); break end
+            F.Print((change.name or ("recipe " .. change.id)) .. " changed: " .. table.concat(change.lines, ", "))
+        end
+    end
     -- Output items that were not cached yet are asked for; GET_ITEM_INFO_RECEIVED runs this again.
     F.recachePending = result ~= nil and result.pending > 0
     F.Craft.Refresh()   -- the + button on the profession window
@@ -300,7 +307,7 @@ driver:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4)
     if event == "MAIL_SHOW" then F.Sales.Hook(); F.Sales.OnInboxChanged(); return end
     if event == "MAIL_INBOX_UPDATE" or event == "MAIL_CLOSED" then F.Sales.OnInboxChanged(); return end
     if event == "AUCTION_HOUSE_PURCHASE_COMPLETED" then F.Bought.OnPurchaseCompleted(arg1); return end   -- gear: what was paid (Bought.lua)
-    if event == "AUCTION_HOUSE_CLOSED" then F.Disenchant.Invalidate(); return end   -- the Enchanting list is rebuilt next time it is drawn
+    if event == "AUCTION_HOUSE_CLOSED" then return end   -- (the Enchanting list is not rebuilt by itself: the Refresh button does it)
     if event == F.Bought.EVENT then OnAuctionPurchase(arg1, arg2); return end
     if event == "COMMODITY_SEARCH_RESULTS_UPDATED" then F.OnCommoditySearch(arg1); return end
     -- the vendor "+" button (Vendor.lua): open/closed state at once, the button itself a moment later
@@ -363,8 +370,7 @@ local function Status()
         .. table.concat(F.VisibleTabs(), ", ") .. ".")
     local last = F.crafts.last
     F.Print("Create All time: hook " .. (F.crafts.hooked and "installed" or "NOT installed (no C_TradeSkillUI.CraftRecipe)") .. ", "
-        .. F.crafts.seen .. " craft request(s) seen" .. (last and (", the last for recipe " .. last.id .. " x" .. last.casts) or "")
-        .. (F.db.craftTime == false and ", printing is off" or "") .. ".")
+        .. F.crafts.seen .. " craft request(s) seen" .. (last and (", the last for recipe " .. last.id .. " x" .. last.casts) or "") .. ".")
     F.Print(F.Sales.StatusText())
     local de = F.Luck.de
     F.Print(string.format("Disenchants: %d cast(s) started, %d finished (%d with no start seen), %d counted; the item named by the cast %d time(s), found from the bags %d time(s), from the bags alone %d time(s), %d time(s) more than one kind of gear had left; %d loot line(s) seen after one, %d Enchanting material(s) counted (%d from before the cast ended).",
@@ -379,7 +385,15 @@ local function Status()
         F.Print("Last recipe scan failed: " .. (REASONS[scan.failed] or tostring(scan.failed)) .. ".")
     elseif scan then
         F.Print("Last recipe scan (" .. tostring(scan.prof) .. "): " .. scan.seen .. " listed, " .. scan.saved .. " saved, " .. scan.removed
-            .. " removed, " .. scan.pending .. " waiting for item data.")
+            .. " removed, " .. scan.pending .. " waiting for item data; "
+            .. (scan.lineCheck and (scan.rejected .. " of another profession left out" .. (scan.lineReliable == false and " (the lines disagree with the window on most recipes, so none was left out)" or ""))
+                or "the game gives no skill line per recipe, so none was checked") .. ".")
+        if scan.lines and next(scan.lines) then
+            local parts = {}
+            for key, entry in pairs(scan.lines) do parts[#parts + 1] = key .. " x" .. entry.count .. " (" .. entry.sample .. ")" end
+            table.sort(parts)
+            F.Print("Skill lines the learned recipes gave (line/parent): " .. table.concat(parts, ", ") .. ".")
+        end
     else
         F.Print("No recipe scan yet: open your Cooking window.")
     end
@@ -424,19 +438,20 @@ local function Help()
     F.Print("shows which of your Cooking, Engineering and Tailoring recipes make a profit. Commands:")
     print("  /dpp - open or close the window")
     print("  /dpp rank auto|0-5 - the Master Chef rank to use (auto reads it from the game)")
-    print("  /dpp crafts <number> - how many crafts the hover tooltip's range covers (now " .. F.db.crafts .. "); [A] uses /dpp buy")
     print("  /dpp odds 50-99 - the chance of finishing ahead that [A]'s price limits aim for (now " .. F.db.odds .. "%)")
     print("  /dpp buy <crafts>|max - how many crafts [A] buys for (now " .. (F.db.buyCrafts and (F.db.buyCrafts .. " crafts") or "as many as your budget allows") .. ")")
     print("  /dpp bags 0-20 - the bag slots the vendor + button keeps free (now " .. (F.db.bagReserve or 2) .. ")")
     print("  /dpp autosearch on|off - [A] opens Auctionator's Shopping tab and searches the new list (now " .. (F.db.autoSearch ~= false and "on" or "off") .. ")")
     print("  /dpp autoqty on|off - lower Auctionator's buy quantity to the units under the price limit (now " .. (F.db.autoQuantity ~= false and "on" or "off") .. ")")
-    print("  /dpp margin 0-100 - the least profit on cost (percent) that [A]'s price limits leave (now " .. F.db.margin .. "%)")
+    print("  /dpp why <item name or id> - why the Enchanting list does or does not hold an item (price age, gone mark, data, value, filters)")
+    print("  /dpp margin 0-999 - the least profit on cost (percent) that [A]'s price limits leave (now " .. F.db.margin .. "%)")
     print("  /dpp budget <gold>|all - the most [A]'s lists may cost (now " .. (F.db.budget and (F.db.budget .. " gold") or "all your gold") .. ")")
     print("  /dpp cooking | engineering | tailoring | enchanting - open the window on that profession's tab")
     print("  /dpp luck - the luck counter: extra results seen against the Master Chef chance (/dpp luck reset clears this session)")
+    print("  /dpp owned <item> - how many of an item each way of counting reports (bags, with the bank)")
+    print("  /dpp recipes [cooking|engineering|tailoring] - the saved recipes of a profession, grouped by the skill line the game gives each")
     print("  /dpp status - what was read and saved")
     print("  /dpp minimap on|off - show or hide the minimap button (drag it to move it)")
-    print("  /dpp crafttime on|off - print how long a Create All takes (DPP Craft time: 15m)")
     print("  /dpp sales - the luck window's AH sales tab: what your auctions really brought in, deposits included")
     print("  /dpp de - what the Enchanting tab found in Auctionator's data")
     print("Open your Cooking (and Engineering, Tailoring) window once so the recipes are saved, and visit vendors so their prices are saved.")
@@ -468,14 +483,6 @@ SlashCmdList.DEFFARPROFESSIONPROFIT = function(message)
             return
         end
         RefreshWindow()
-    elseif command == "crafts" then
-        local number = tonumber(argument)
-        if not F.Integer(number, 1, 100000) then
-            F.Print("usage: /dpp crafts 1-100000 (the number of crafts the tooltip's range covers).")
-        else
-            F.db.crafts = number
-            F.Print("the tooltip range now covers " .. number .. " crafts.")
-        end
     elseif command == "odds" then
         local number = tonumber(argument)
         if not F.Integer(number, 50, 99) then
@@ -522,13 +529,15 @@ SlashCmdList.DEFFARPROFESSIONPROFIT = function(message)
         end
     elseif command == "margin" then
         local number = tonumber(argument)
-        if not F.Integer(number, 0, 100) then
-            F.Print("usage: /dpp margin 0-100 (the least profit on cost, in percent, that the [A] button's price limits leave; now " .. F.db.margin .. ").")
+        if not F.Integer(number, 0, 999) then
+            F.Print("usage: /dpp margin 0-999 (the least profit on cost, in percent, that the [A] button's price limits leave; now " .. F.db.margin .. ").")
         else
             F.db.margin = number
             F.Print("the [A] button's price limits now leave at least " .. number .. "% margin on cost.")
             if F.UI.IsShown() then F.UI.Refresh() end
         end
+    elseif command == "why" then
+        for _, line in ipairs(F.Disenchant.Why(argument)) do F.Print(line) end
     elseif command == "budget" then
         local number = tonumber(argument)
         if argument == "all" or argument == "" then
@@ -550,6 +559,19 @@ SlashCmdList.DEFFARPROFESSIONPROFIT = function(message)
         else
             F.LuckUI.Toggle()
         end
+    elseif command == "owned" then
+        -- /dpp owned <item link or ID>: what each way of counting says about one item, to find where a wrong count comes from (FOR-0207)
+        local id = tonumber(argument) or tonumber(argument:match("item:(%d+)"))
+        if not F.Integer(id, 1, 2147483647) then
+            F.Print("usage: /dpp owned <item link or item ID>: the item's count by every way the addon can ask.")
+        else
+            for _, line in ipairs(F.OwnedReport(id)) do F.Print(line) end
+        end
+    elseif command == "recipes" then
+        -- /dpp recipes [cooking|engineering|tailoring]: the saved recipes of a profession grouped by the skill line the game gives each (FOR-0208)
+        local prof = F.PROFESSIONS[argument] and not F.PROFESSIONS[argument].disenchant and argument or F.Tab()
+        if F.PROFESSIONS[prof].disenchant then prof = "cooking" end
+        for _, line in ipairs(F.RecipeLinesReport(prof)) do F.Print(line) end
     elseif command == "sales" then
         F.db.luckTab = "auction"
         if F.LuckUI.IsShown() then F.LuckUI.Refresh() else F.LuckUI.Toggle() end
@@ -595,9 +617,6 @@ SlashCmdList.DEFFARPROFESSIONPROFIT = function(message)
     elseif command == "minimap" then
         local on = F.Minimap.Toggle(argument == "on" and true or argument == "off" and false or nil)
         F.Print("the minimap button is now " .. (on and "shown." or "hidden.") .. (on and not F.Minimap.button and " (this client has no minimap to put it on.)" or ""))
-    elseif command == "crafttime" then
-        F.db.craftTime = (argument == "on") or (argument ~= "off" and not F.db.craftTime)
-        F.Print("the time of Create All is now " .. (F.db.craftTime and "printed to the chat (DPP Craft time: 15m)." or "not printed."))
     elseif command == "status" then
         Status()
     else

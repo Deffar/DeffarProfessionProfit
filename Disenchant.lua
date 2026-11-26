@@ -61,9 +61,11 @@ local values = {}
 -- And it holds still while the player works: a search makes Auctionator save new prices, and rebuilding and re-sorting the list on each
 -- of those moved and removed the rows under the pointer. Now a price change only updates the NUMBERS of the rows already in
 -- the list, in place (D.revision counts these), at most every 2 s; the rows themselves, their order and which are shown change
--- only on a full rebuild (D.version counts those): when the window is opened, the tab is chosen, the Refresh button is pressed,
--- the auction house is closed, a scan has finished, or, a few times at most, while items were still loading.
+-- only on a full rebuild (D.version counts those): the first time, when the Refresh button is pressed, or, while items were still
+-- loading, until they have (Finish). Browsing, searching or scanning the auction house never rebuilds it; a price that makes a row lose money
+-- takes it out at once (a losing item is never shown), and a price for an item that is not listed is counted for the "Refresh lists them" note.
 local cache, dirty, stale = nil, false, false
+local job = nil   -- the build in progress: { co, sliceStart, progress, discard } (declared here, above D.Invalidate that cancels it: a later `local` left Invalidate reading a global)
 local builtAt, updatedAt = 0, -math.huge
 D.version = 0                        -- counts full rebuilds: the window re-filters and re-sorts when it changes
 D.revision = 0                       -- counts in-place updates of the numbers: the window redraws the cells
@@ -90,7 +92,7 @@ end
 -- Auctionator writes a price for that key again (a scan or a search that finds it).
 -- It is saved (`db.gone[key] = { p = the price it had, t = when }`) so a reload does not bring it back, and it is let back only when
 -- Auctionator writes a DIFFERENT price for the key (a new listing), not when the same old price is saved again. Entries older than a week are forgotten.
-local GONE_DAYS = 7
+local GONE_DAYS = 1
 local function Gone()
     local db = F.db
     if not db then return {} end
@@ -113,6 +115,7 @@ end
 
 -- A full rebuild on the next redraw.
 function D.Invalidate()
+    if job then job.discard = true end
     candidates, values, cache, dirty, stale = nil, {}, nil, false, false
     changedKeys, changedAll, pendingRows, pendingAll = {}, false, {}, false
 end
@@ -122,11 +125,15 @@ end
 function D.PricesChanged(key)
     stale = true
     D.burst = D.burst + 1
-    if type(key) == "string" and Gone()[key] then   -- a new price for a removed item means it is listed again; the same old one does not
+    local gone = type(key) == "string" and Gone()[key] or nil
+    if type(gone) == "table" then
+        -- a price Auctionator writes for a removed item means it has been seen again: it is listed again. The writes of the first seconds after the
+        -- removal are the search that removed it finishing, not a new sighting (a DIFFERENT price always counts). Before this the same price
+        -- never cleared it, so an item that came back at its old price stayed hidden for a week (Codex review, 2026-11-26).
         local database = PriceDatabase()
         local entry = database and database.db[key]
         local now = type(entry) == "table" and entry.m or nil
-        if now ~= Gone()[key].p then Gone()[key] = nil end
+        if now ~= gone.p or F.Now() - (F.Number(gone.t) and gone.t or 0) >= 5 then Gone()[key] = nil end
     end
     local id = type(key) == "string" and tonumber(key:match("^(%d+)$")) or nil
     if type(key) ~= "string" then
@@ -135,6 +142,7 @@ function D.PricesChanged(key)
         changedAll, values = true, {}
     else
         changedKeys[key] = true
+        if cache and not cache.byKey[key] then D.unlisted = (D.unlisted or 0) + 1 end   -- (not in the list: only a Refresh can add it)
     end
 end
 
@@ -146,7 +154,7 @@ function D.TakeChange()
 end
 
 function D.ItemsArrived()
-    if cache and cache.info.loading > 0 and cache.loads < MAX_LOAD_REBUILDS then dirty = true end
+    if cache and cache.info.loading > 0 and (cache.loads < MAX_LOAD_REBUILDS or cache.progressed) then dirty = true end
 end
 
 -- Auctionator keeps a price until a newer one replaces it, so an item sold or expired long ago stays in its database with its old
@@ -158,10 +166,53 @@ function D.MaxAge()   -- the Max age setting, never above the day a price is tru
     return math.min(F.Integer(F.db and F.db.maxAge, 0, 99) and F.db.maxAge or 1, D.MAX_AGE)
 end
 
+-- The age of a price in scan days (Auctionator's GetPriceAge: today's scan day less the newest day of the item's history `h`), worked out
+-- here without the table and the sort GetPriceAge builds for every call (50 000 calls were most of the time the list took to build).
+-- `known` is false when the pieces it needs are not there (then GetPriceAge is asked). Auctionator.Constants.SCAN_DAY_0 is the day its own
+-- GetScanDay counts from (Source\Database\Mixin.lua, read from the installed addon, FOR-0191).
+local function FastAge(database, key)
+    local entry = database.db[key]
+    local history = type(entry) == "table" and entry.h or nil
+    local constants = _G.Auctionator and _G.Auctionator.Constants
+    local zero = type(constants) == "table" and constants.SCAN_DAY_0 or nil
+    if type(history) ~= "table" or not F.Number(zero) or type(time) ~= "function" then return nil, false end
+    local newest
+    for day in pairs(history) do
+        local number = tonumber(day)
+        if number and (not newest or number > newest) then newest = number end
+    end
+    if not newest then return nil, true end   -- (no day on record)
+    return math.floor((time() - zero) / 86400) - newest, true
+end
+
+-- Days since the price of `key` was last seen, nil when the database cannot say.
+function D.Age(database, key)
+    local age, known = FastAge(database, key)
+    if known then return age end
+    if F.Has(database, "GetPriceAge") then return database:GetPriceAge(key) end
+    return nil
+end
+
 function D.TooOld(database, key)
-    if not F.Has(database, "GetPriceAge") then return false end   -- (no way to tell: the list says so, FOR-0191)
-    local age = database:GetPriceAge(key)
+    local age, known = FastAge(database, key)
+    if not known then
+        if not F.Has(database, "GetPriceAge") then return false end   -- (no way to tell: the list says so, FOR-0191)
+        age = database:GetPriceAge(key)
+    end
     return not F.Number(age) or age > D.MAX_AGE
+end
+
+-- The list is built in slices of a few milliseconds, one a frame, so opening the tab never freezes the game: the build is a coroutine
+-- that hands control back when its share of the frame is spent (Tick). Without the game's clock or timers (the tests) it runs at once.
+local SLICE_MS = 8
+local function Tick(done, total, base, span)
+    if not (job and job.sliced and coroutine.running() == job.co) then return end   -- (only inside the build's own coroutine)
+    job.progress = base + span * (done / math.max(1, total))
+    if debugprofilestop() - job.sliceStart >= SLICE_MS then coroutine.yield() end
+end
+local function Sliced()
+    return type(debugprofilestop) == "function" and type(C_Timer) == "table" and type(C_Timer.After) == "function"
+        and type(coroutine) == "table" and type(coroutine.create) == "function"
 end
 
 function D.Pending()
@@ -184,15 +235,39 @@ local function Candidates(database)
     if candidates then return candidates end
     local list = {}
     local instant = F.Has(C_Item, "GetItemInfoInstant")
+    local classOf = {}   -- (the same item comes with several suffixes: asked once)
+    local count, seen = 0, 0
+    -- Auctionator on Forever files a random-suffix item under TWO keys, "gr:<id>:<suffix>" and the plain "<id>" (Source\Utilities\
+    -- DBKeyFromLink.lua: callback({"gr:..", basicKey})). The plain one is only the last suffix seen, and no plain version of such an item
+    -- exists ("Superior Gloves" has only suffixes): an id that has any suffix key is listed by those, never by the bare name.
+    local suffixed = {}
     for key in pairs(database.db) do
+        count = count + 1
         if type(key) == "string" then
-            local id, suffix = key:match("^(%d+)$"), nil
-            if not id then id, suffix = key:match("^gr:(%d+):(.+)$") end
-            id = tonumber(id)
+            local text = key:match("^gr:(%d+):")
+            if text then suffixed[tonumber(text)] = true end
+        end
+    end
+    for key in pairs(database.db) do
+        seen = seen + 1
+        if seen % 512 == 0 then Tick(seen, count, 0, 0.4) end
+        if type(key) == "string" then
+            local id, suffix = tonumber(key), nil
+            if not id then
+                local text
+                text, suffix = key:match("^gr:(%d+):(.+)$")
+                id = tonumber(text)
+            elseif suffixed[id] then
+                id = nil   -- (the plain key of an item that has suffix keys)
+            end
             if id then
-                local class
-                if instant then class = select(6, C_Item.GetItemInfoInstant(id)) end
-                if class == nil or GEAR[class] then list[#list + 1] = { key = key, id = id, suffix = suffix } end
+                local class = classOf[id]
+                if class == nil then
+                    if instant then class = select(6, C_Item.GetItemInfoInstant(id)) end
+                    classOf[id] = class == nil and false or class
+                    if class == nil then class = false end
+                end
+                if class == false or GEAR[class] then list[#list + 1] = { key = key, id = id, suffix = suffix } end
             end
         end
     end
@@ -315,9 +390,12 @@ local function Build()
     local rows = {}
     local unit = MakeUnit()
     local list = Candidates(database)
-    local stats = { candidates = #list, noPrice = 0, notDisenchantable = 0, noValue = 0, positive = 0 }
+    local stats = { candidates = #list, noPrice = 0, notDisenchantable = 0, noValue = 0, positive = 0, losing = 0 }
     info.stats = stats
-    for _, c in ipairs(list) do
+    local brackets, ranges = {}, {}   -- an item's bracket (once per item), and the brackets seen per quality (info.ranges)
+    info.ranges = ranges
+    for index, c in ipairs(list) do
+        if index % 256 == 0 then Tick(index, #list, 0.4, 0.55) end
         local entry = database.db[c.key]
         local price = type(entry) == "table" and entry.m or nil
         if D.IsGone(c.key) then
@@ -333,9 +411,17 @@ local function Build()
             elseif not (GEAR[meta.class] and meta.quality >= GOOD and meta.quality <= EPIC) or D.Blocked(c.id, meta.name) then
                 stats.notDisenchantable = stats.notDisenchantable + 1
             else
+                -- the item level range it falls in, kept for the Level dropdown whatever its profit: the ranges of every item in the scan, not
+                -- only of the ones that pay (the list holds only those)
+                local bracket = brackets[c.id]
+                if bracket == nil then bracket = D.Bracket(c.id) or false; brackets[c.id] = bracket end
+                if bracket then
+                    local byQuality = ranges[meta.quality]
+                    if not byQuality then byQuality = {}; ranges[meta.quality] = byQuality end
+                    byQuality[bracket[1] .. "-" .. bracket[2]] = bracket
+                end
                 local gross = values[c.id]
                 if gross == nil then
-                    local bracket = D.Bracket(c.id)
                     if bracket then
                         gross = D.Gross(bracket, unit)
                     else   -- (no table of its own for it: Auctionator's own figure, when it has one)
@@ -343,49 +429,48 @@ local function Build()
                         gross = (ok and F.Number(value)) and value or false
                     end
                     if gross == 0 then gross = false end
-                    values[c.id] = gross
+                    if gross then values[c.id] = gross end   -- (a missing value is not kept: the item data may only have been late, and it is looked up again next build)
                 end
                 if not (gross and gross > 0) then
                     stats.noValue = stats.noValue + 1
                 else
                     local net = math.floor(gross * (1 - F.AH_CUT))
                     local profit = net - price
-                    if profit > 0 then stats.positive = stats.positive + 1 end
+                    if profit <= 0 then
+                        stats.losing = stats.losing + 1   -- (only counted: the list never shows an item that loses money, so it is not built)
+                    else
+                    stats.positive = stats.positive + 1
                     local name = c.suffix and (meta.name .. " " .. D.SuffixLabel(c.suffix)) or meta.name
-                    local age = F.Has(database, "GetPriceAge") and database:GetPriceAge(c.key) or nil   -- days since the price was last seen
+                    local age = D.Age(database, c.key)   -- days since the price was last seen
                     rows[#rows + 1] = { id = c.key, itemID = c.id, name = name, item = meta, via = {},
                         vendorValue = (meta.sell and meta.sell > 0) and meta.sell or nil,
                         ev = { status = "ok", rank = 0, chance = 0, reagents = {}, missing = 0, complete = true, yield = 1,
                             cost = price, value = net, expected = net, baseProfit = profit, profit = profit,
                             margin = price > 0 and profit / price or nil, sellEach = net },
                         de = { key = c.key, price = price, gross = gross, net = net, searchName = name, age = age, level = D.Level(c.id) } }
+                    end
                 end
             end
         end
     end
-    stats.listed = #rows
+    stats.listed = #rows + stats.losing   -- every item worked out, the ones that pay and the ones that do not
     table.sort(rows, function(a, b)
         if a.ev.profit ~= b.ev.profit then return a.ev.profit > b.ev.profit end
         return a.name < b.name
     end)
-    D.lastRows = rows
-    local paying = 0
-    for index, row in ipairs(rows) do
-        if row.ev.profit > 0 then paying = index else break end   -- (sorted: the paying ones come first)
-    end
-    for index = #rows, math.max(paying, MAX_ROWS) + 1, -1 do rows[index] = nil end
     info.count = #rows
     -- the odds of a single disenchant paying (only for the rows kept): essences the player can combine count at Auctionator's
     -- rate, as its own disenchant value does
-    for _, row in ipairs(rows) do
+    for index, row in ipairs(rows) do
+        if index % 256 == 0 then Tick(index, #rows, 0.95, 0.05) end
         row.de.bracket = D.Bracket(row.itemID)   -- kept, so an update in place does not look it up again
         row.de.odds = row.de.bracket and D.ProfitChance(row.de.bracket, row.de.price, unit) or nil
     end
     -- how old the prices behind the list are (the oldest one shown)
-    if F.Has(database, "GetPriceAge") then
+    do
         local oldest
         for _, row in ipairs(rows) do
-            local age = database:GetPriceAge(row.de.key)
+            local age = row.de.age
             if age and (not oldest or age > oldest) then oldest = age end
         end
         info.oldest = oldest
@@ -409,7 +494,7 @@ function D.Report()
         return { "Auctionator's price database or disenchant API is missing." }
     end
     D.Invalidate()   -- a fresh build, so the counts are today's
-    local rows, info = D.Rows()
+    local rows, info = D.BuildNow()
     local s = info.stats
     lines[#lines + 1] = string.format("price database: %d gear keys; %d without a price, %d not uncommon-or-better gear, %d with no disenchant value (dust prices unknown?), %d still loading; %d left out because their price is more than %d day(s) old.",
         s.candidates, s.noPrice, s.notDisenchantable, s.noValue, info.loading, s.stale or 0, D.MAX_AGE)
@@ -427,6 +512,121 @@ function D.Report()
     for _, row in ipairs(rows) do byValue[#byValue + 1] = row end
     table.sort(byValue, function(a, b) return a.de.gross > b.de.gross end)
     Show("highest disenchant value", byValue)
+    return lines
+end
+
+-- /dpp why <part of a name | item id>: for the items that match, every reason the Enchanting list does or does not hold them: the price and its
+-- age, the "gone" mark, the item data, the rules of the list (gear, quality, blocked), what disenchanting is worth, and the screen's filters. Read-only:
+-- it asks the game for nothing and changes nothing. Names are read from the item cache or the saved names, so an item whose data has never loaded
+-- is found by its id only.
+function D.Why(query)
+    local lines = {}
+    if not D.Available() then return { "Auctionator's price database or disenchant API is missing." } end
+    query = type(query) == "string" and query:gsub("^%s+", ""):gsub("%s+$", "") or ""
+    if query == "" then return { "usage: /dpp why <part of an item name or an item id>" } end
+    local database = PriceDatabase()
+    local wantedId = tonumber(query)
+    local needle = query:lower()
+    local function NameOf(id)
+        local saved = F.db and type(F.db.items) == "table" and F.db.items[id]
+        if type(saved) == "table" and F.String(saved.name) and saved.name ~= "" then return saved.name end
+        local name = F.Has(C_Item, "GetItemInfo") and C_Item.GetItemInfo(id) or nil
+        return F.String(name) and name or nil
+    end
+    local suffixed = {}
+    for key in pairs(database.db) do
+        if type(key) == "string" then
+            local text = key:match("^gr:(%d+):")
+            if text then suffixed[tonumber(text)] = true end
+        end
+    end
+    local found = {}
+    -- every gear key of the database, the bare key of a suffixed item too (the list's own candidates leave that one out)
+    for key in pairs(database.db) do
+        if type(key) == "string" then
+            local id, suffix = tonumber(key), nil
+            if not id then
+                local text
+                text, suffix = key:match("^gr:(%d+):(.+)$")
+                id = tonumber(text)
+            end
+            if id and (not wantedId or id == wantedId) then
+                local class = F.Has(C_Item, "GetItemInfoInstant") and select(6, C_Item.GetItemInfoInstant(id)) or nil
+                if class == nil or GEAR[class] then
+                    local base = NameOf(id)
+                    local full = base and (suffix and (base .. " " .. D.SuffixLabel(suffix)) or base) or nil
+                    if wantedId or (full and full:lower():find(needle, 1, true)) then
+                        found[#found + 1] = { c = { key = key, id = id, suffix = suffix }, name = full or ("item " .. id) }
+                    end
+                end
+            end
+        end
+    end
+    table.sort(found, function(a, b) return a.name < b.name end)
+    if #found == 0 then
+        return { "no gear in Auctionator's price database matches \"" .. query .. "\" (a name is found only once the item's data has loaded: try its item id)." }
+    end
+    local api, unit = API(), MakeUnit()
+    local db = F.db
+    local need = (F.Integer(db.margin, 0, 999) and db.margin or 10) / 100
+    local least = (F.Number(db.minProfitCopper) and db.minProfitCopper >= 0) and db.minProfitCopper or 100
+    local minOdds = F.Integer(db.minOdds, 0, 100) and db.minOdds or 30
+    for index, hit in ipairs(found) do
+        if index > 6 then lines[#lines + 1] = "... and " .. (#found - 6) .. " more: name them more exactly."; break end
+        local c = hit.c
+        lines[#lines + 1] = hit.name .. " (" .. c.key .. ")"
+        local function Say(text) lines[#lines + 1] = "  " .. text end
+        local entry = database.db[c.key]
+        local price = type(entry) == "table" and entry.m or nil
+        local row = cache and cache.byKey[c.key] or nil
+        Say(row and "in the list now." or "not in the list now.")
+        if not c.suffix and suffixed[c.id] then
+            Say("the bare key of an item that has suffix keys: never listed (it only holds the last suffix's price).")
+        end
+        if not (F.Number(price) and price > 0) then
+            Say("no price.")
+        else
+            local age = D.Age(database, c.key)
+            Say(string.format("price %s, %s%s.", F.Money(price), F.Number(age) and (age == 0 and "seen today" or (age .. " day(s) ago")) or "no day on record",
+                D.TooOld(database, c.key) and ": TOO OLD, left out (older than " .. D.MAX_AGE .. " day)" or ""))
+        end
+        local gone = Gone()[c.key]
+        if type(gone) == "table" then
+            Say(string.format("marked GONE %s ago at price %s (a search of it found nothing at or under its cap); a new price clears it.",
+                F.DurationText and F.DurationText(F.Now() - (gone.t or 0)) or "some time", gone.p and F.Money(gone.p) or "?"))
+        end
+        local meta = F.ItemMeta(c.id)
+        if meta.quality == nil or meta.class == nil or not meta.name then
+            Say("item data NOT loaded yet.")
+        else
+            local gear = GEAR[meta.class] and meta.quality >= GOOD and meta.quality <= EPIC
+            Say(gear and "gear of uncommon to epic quality." or "not uncommon-to-epic weapon or armour: not listed.")
+            if D.Blocked(c.id, meta.name) then Say("blocked: marked as not disenchantable.") end
+        end
+        local bracket = D.Bracket(c.id)
+        local gross
+        if bracket then gross = D.Gross(bracket, unit)
+        else
+            local ok, value = pcall(api.GetDisenchantPriceByItemID, F.CALLER, c.id)
+            gross = (ok and F.Number(value)) and value or nil
+        end
+        if not (gross and gross > 0) then
+            Say("no disenchant value" .. (bracket and "." or " (no bracket of the table for its item level, or the item's level is not known yet)."))
+        elseif F.Number(price) and price > 0 then
+            local net = math.floor(gross * (1 - F.AH_CUT))
+            local profit = net - price
+            local margin = profit / price
+            Say(string.format("disenchants for %s (%s after the cut): profit %s (%d%%).", F.Money(gross), F.Money(net), F.ProfitText(profit), math.floor(margin * 100 + 0.5)))
+            if profit <= 0 then
+                Say("LOSES money: never listed.")
+            else
+                if margin < need then Say(string.format("hidden by Min return: %d%% < %d%%.", math.floor(margin * 100 + 0.5), math.floor(need * 100 + 0.5))) end
+                if profit < least then Say("hidden by Min profit: " .. F.Money(profit) .. " < " .. F.Money(least) .. ".") end
+                local odds = bracket and D.ProfitChance(bracket, price, unit) or nil
+                if odds and odds < minOdds then Say(string.format("hidden by Min odds: %d%% < %d%%.", math.floor(odds + 0.5), minOdds)) end
+            end
+        end
+    end
     return lines
 end
 
@@ -463,7 +663,7 @@ local function UpdateRows(rows, byKey)
                 end
             end
             Apply(row, price, gross)
-            row.de.age = F.Has(database, "GetPriceAge") and database:GetPriceAge(row.de.key) or row.de.age
+            row.de.age = D.Age(database, row.de.key) or row.de.age
         end
         row.de.odds = row.de.bracket and D.ProfitChance(row.de.bracket, row.de.price, unit) or nil
     end
@@ -479,6 +679,62 @@ local function UpdateRows(rows, byKey)
     changedKeys, changedAll = {}, false
 end
 
+-- A finished build becomes the list the window shows.
+local function Finish(rows, info)
+    local loads = (cache and not D.requested) and (cache.loads + 1) or 0   -- rebuilds made because items were still loading (a Refresh starts again)
+    D.requested = false
+    -- Items that were still loading when the list was built are in it as nothing: while more of them arrive from one build to the next the
+    -- rebuilds go on (the list fills in by itself), and with no progress they stop after MAX_LOAD_REBUILDS.
+    local before = cache and cache.info and cache.info.loading or nil
+    local progressed = before == nil or (info.loading or 0) < before
+    local byKey = {}
+    for _, row in ipairs(rows) do byKey[row.de.key] = row end
+    cache = { rows = rows, info = info, loads = loads, byKey = byKey, progressed = progressed }
+    changedKeys, changedAll, pendingRows, pendingAll = {}, false, {}, true   -- (a fresh list: the window draws all of it)
+    -- (still loading items: another build follows by itself, see Step)
+    dirty = (info.loading or 0) > 0 and (loads < MAX_LOAD_REBUILDS or progressed)
+    stale, builtAt, updatedAt = false, Clock(), -math.huge   -- (the first update after a build is not made to wait)
+    D.unlisted = 0
+    D.version = D.version + 1
+    D.revision = D.revision + 1
+    local callback = D.afterBuild
+    D.afterBuild = nil
+    if callback then callback(info) end
+end
+
+local function Step()
+    if not job then return end
+    job.sliceStart = debugprofilestop()
+    local ok, rows, info = coroutine.resume(job.co)
+    if not ok then
+        job = nil
+        F.Print("could not build the Enchanting list: " .. tostring(rows))
+        return
+    end
+    if coroutine.status(job.co) == "dead" then
+        local done = job
+        job = nil
+        if done.discard or info.unavailable then   -- (a fresh list was asked for meanwhile, or Auctionator went away: not kept)
+            if F.UI and F.UI.IsShown() then F.UI.Refresh() end
+            return
+        end
+        Finish(rows, info)
+        if F.UI and F.UI.IsShown() then F.UI.Refresh() end
+        if dirty and type(C_Timer) == "table" then   -- items were still loading: the next build, once some have arrived
+            C_Timer.After(2.2, function() if dirty and F.UI and F.UI.IsShown() then F.UI.Refresh() end end)
+        end
+    else
+        if F.UI and F.UI.Progress then F.UI.Progress(job.progress) end
+        C_Timer.After(0, Step)
+    end
+end
+
+-- The list while it is being built: nothing to show yet, and how far the build is.
+local function BuildingInfo()
+    return { prof = "enchanting", proc = false, disenchant = true, rank = 0, source = "none", count = 0, missing = 0, loading = 0,
+        building = true, progress = job and job.progress or 0 }
+end
+
 function D.Rows()
     D.ListenScans()   -- (Auctionator may have loaded since the last try)
     if cache and not (dirty and Clock() - builtAt >= 2) then
@@ -489,16 +745,40 @@ function D.Rows()
         end
         return cache.rows, cache.info
     end
-    local loads = cache and (cache.loads + 1) or 0   -- rebuilds made because items were still loading
+    if not Sliced() then   -- no clock or timers (the tests): built at once
+        local rows, info = Build()
+        if info.unavailable then return rows, info end   -- (not kept: Auctionator may load later)
+        Finish(rows, info)
+        return rows, info
+    end
+    if not (API() and PriceDatabase()) then return Build() end   -- (nothing to wait for: it says Auctionator is missing)
+    if not job then
+        job = { sliced = true, progress = 0 }
+        job.co = coroutine.create(function() return Build() end)
+        Step()
+        if cache then return cache.rows, cache.info end   -- (a quick build finished in its first slice)
+    end
+    -- the list already shown stays until the new one is ready; with none yet, the window says how far the build is
+    if cache then return cache.rows, cache.info end
+    return {}, BuildingInfo()
+end
+
+-- Asks for a fresh list: the one shown stays until the new one is built (Refresh).
+function D.Refresh(callback)
+    D.afterBuild = callback   -- (run once when the new list is ready)
+    D.requested = true        -- (the build count for items still loading starts again)
+    if job then job.discard = true end
+    candidates, values = nil, {}
+    dirty, builtAt = true, -math.huge
+    D.unlisted = 0
+end
+
+function D.Building() return job ~= nil end
+
+-- A build made at once (/dpp de): the counts are wanted now, a few frames of waiting would not do.
+function D.BuildNow()
     local rows, info = Build()
-    if info.unavailable then return rows, info end   -- (not kept: Auctionator may load later)
-    local byKey = {}
-    for _, row in ipairs(rows) do byKey[row.de.key] = row end
-    cache = { rows = rows, info = info, loads = loads, byKey = byKey }
-    changedKeys, changedAll, pendingRows, pendingAll = {}, false, {}, true   -- (a fresh list: the window draws all of it)
-    dirty, stale, builtAt, updatedAt = false, false, Clock(), -math.huge   -- (the first update after a build is not made to wait)
-    D.version = D.version + 1
-    D.revision = D.revision + 1
+    if not info.unavailable then Finish(rows, info) end
     return rows, info
 end
 
@@ -627,7 +907,7 @@ end
 
 -- The highest price worth paying for a row's item at the Margin set (what [A] searches with): its price after the cut over (1 + margin).
 function D.Cap(de)
-    local margin = F.Integer(F.db.margin, 0, 100) and F.db.margin or 10
+    local margin = F.Integer(F.db.margin, 0, 999) and F.db.margin or 10
     return math.floor(de.net / (1 + margin / 100)), margin
 end
 

@@ -256,7 +256,7 @@ local function Tip(button)
             -- what one craft sells for: to a vendor, or with Shift held at the auction house (after its cut), both whatever the sell mode
             local value = shift and C.AuctionValue(entry) or (not shift and C.VendorValue(entry)) or nil
             if value then
-                GameTooltip:AddLine(S.PerTotal(value, value * entry.crafts), 1, 1, 1)
+                GameTooltip:AddLine(S.PerTotal(value, value * entry.crafts, shift and "AH:" or "Sells:"), 1, 1, 1)
             else
                 GameTooltip:AddLine(S.Grey(shift and "No auction house price." or "A vendor does not buy it."), 1, 1, 1)
             end

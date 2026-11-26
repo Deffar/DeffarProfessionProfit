@@ -70,9 +70,9 @@ end
 -- copper (nil when the purse cannot be read and none is set) and the character's gold.
 function F.ShoppingSettings()
     local db = F.db
-    local crafts = F.Integer(db.crafts, 1, 100000) and db.crafts or 100   -- the tooltip's range; also the fallback below
+    local crafts, fill = 100000, true   -- as many as the budget allows: no fixed number (with no readable purse either, the most there is)
     local odds = F.Integer(db.odds, 50, 99) and db.odds or 90
-    local margin = F.Integer(db.margin, 0, 100) and db.margin or 10   -- percent of cost
+    local margin = F.Integer(db.margin, 0, 999) and db.margin or 10   -- percent of cost
     local gold = F.Bought and F.Bought.Money() or nil
     local budget = gold                                    -- empty box: all the gold
     if F.Integer(db.budget, 1, 100000000) then
@@ -80,13 +80,9 @@ function F.ShoppingSettings()
         if gold and gold < budget then budget = gold end   -- never more than is held
     end
     -- How many crafts the list is for: the /dpp buy number when set; otherwise as many as the budget allows
-    -- (the plan cuts this down to what the budget buys within the price limits); when neither a budget nor
-    -- the purse can be read, the tooltip's crafts setting, so an unreadable purse never asks for 100000.
-    local fill = false
+    -- (the plan cuts this down to what the budget buys within the price limits).
     if F.Integer(db.buyCrafts, 1, 100000) then
-        crafts = db.buyCrafts
-    elseif budget then
-        crafts, fill = 100000, true
+        crafts, fill = db.buyCrafts, false
     end
     return crafts, odds, budget, gold, margin, fill
 end
@@ -264,11 +260,16 @@ local function EvaluateDepth(itemID)
     local limit = F.Money(cap)
     -- lower the buy window's quantity box when it is open on this item and shows more than the target
     local set = false
-    if target >= 1 and F.db.autoQuantity ~= false then
+    if F.db.autoQuantity ~= false then
         local box = BuyQuantityBox(itemID)
         local shown = box and tonumber(box:GetText())
-        if shown and shown > target then
-            box:SetNumber(target)
+        if target >= 1 then
+            if shown and shown > target then
+                box:SetNumber(target)
+                set = true
+            end
+        elseif depth.units == 0 and remaining > 0 and shown and shown ~= 0 then
+            box:SetNumber(0)   -- nothing at or under the limit: the old quantity is no use (and is not left for a careless click); Auctionator's box takes a 0 (human, 2026-11-26)
             set = true
         end
     end
@@ -279,8 +280,8 @@ local function EvaluateDepth(itemID)
     if remaining == 0 then
         F.Print(string.format("%s: you already have the %d you asked for.", active.name, active.need))
     elseif depth.units == 0 then
-        F.Print(string.format("%s: none at or under %s%s.", active.name, limit,
-            depth.cheapest and (" (cheapest " .. F.Money(depth.cheapest) .. ")") or ""))
+        F.Print(string.format("%s: none at or under %s%s%s.", active.name, limit,
+            depth.cheapest and (" (cheapest " .. F.Money(depth.cheapest) .. ")") or "", set and "; quantity set to 0" or ""))
     elseif depth.units < remaining then
         F.Print(string.format("%s: %d of %d under %s%s - %s %d.", active.name, depth.units, remaining, limit, lowered,
             set and "quantity set to" or "set the quantity to", target))

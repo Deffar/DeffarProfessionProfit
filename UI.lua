@@ -250,6 +250,30 @@ local function MakeButton(parent, text, width, height)
     return button
 end
 
+-- A small "x" inside the right end of a text box that clears it (a search box). The box keeps its own OnTextChanged: it calls
+-- U.ClearShown(box) so the x shows only while there is text. Returns the button.
+function U.AddClear(box)
+    local clear = CreateFrame("Button", nil, box)
+    clear:SetSize(14, 14)
+    clear:SetPoint("RIGHT", box, "RIGHT", -2, 0)
+    clear.label = Text(clear, nil, GREY, "CENTER")
+    clear.label:SetAllPoints()
+    clear.label:SetText("x")
+    clear:SetScript("OnEnter", function(self) self.label:SetTextColor(TEXT[1], TEXT[2], TEXT[3]) end)
+    clear:SetScript("OnLeave", function(self) self.label:SetTextColor(GREY[1], GREY[2], GREY[3]) end)
+    clear:SetScript("OnClick", function()
+        box:SetText("")   -- (runs OnTextChanged: the list is filtered again, the x goes)
+        if box.SetFocus then box:SetFocus() end
+    end)
+    clear:Hide()
+    box.clearButton = clear
+    return clear
+end
+
+function U.ClearShown(box)
+    if box.clearButton then box.clearButton:SetShown((box:GetText() or "") ~= "") end
+end
+
 local function PaintCheck(box)
     local border = box.hover and {0.62, 0.62, 0.66} or {0.34, 0.34, 0.37}
     for _, edge in ipairs(box.edges) do Color(edge, border) end
@@ -722,10 +746,8 @@ local function PlaceVertical(openIndex, extra)
         frame.divider:ClearAllPoints()
         frame.divider:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE, -foot)
         frame.divider:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -SIDE, -foot)
-        frame.luckButton:ClearAllPoints()
-        frame.luckButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -SIDE, -(foot + 8))
         frame.refreshButton:ClearAllPoints()
-        frame.refreshButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -(SIDE + 68), -(foot + 8))
+        frame.refreshButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -SIDE, -(foot + 8))
     end
     PlaceTopLeft(frame.prev, frame, SIDE, foot + 8)
     PlaceTopLeft(frame.next, frame, SIDE + 32, foot + 8)
@@ -839,7 +861,7 @@ local function PaintDetail(d)
         -- one short line; the table below speaks for itself
         local explain = state.proc and string.format("Break-even price per material at rank %d.", ev.rank) or "Break-even price per material."
         if d.de then explain = "Break-even price to buy it, from what it disenchants for." end
-        explain = explain .. string.format(" Teal line: your Margin (%d%%).", F.Integer(F.db.margin, 0, 100) and F.db.margin or 10)
+        explain = explain .. string.format(" Teal line: your Margin (%d%%).", F.Integer(F.db.margin, 0, 999) and F.db.margin or 10)
         panel.head:SetText(explain .. ViaText(d.via))
         -- an Enchanting row buys one thing, the item itself, at its auction house price; it breaks even at what it disenchants for
         local reagents = ev.reagents
@@ -880,7 +902,7 @@ local function PaintDetail(d)
                         cells.room = { string.format("%+.0f%%", room * 100), BAND_TEXT[band] or TEXT }
                         -- The Margin box's cutoff: the price at
                         -- which the whole craft's margin is the one set, every other material at today's price; a teal line on the bar.
-                        local marginPct = F.Integer(F.db.margin, 0, 100) and F.db.margin or 10
+                        local marginPct = F.Integer(F.db.margin, 0, 999) and F.db.margin or 10
                         local marginAt = calc.PriceAtMargin(ev, line, marginPct / 100)
                         -- the real figures behind the Margin line's tooltip: the craft's profit at that price and today, per craft
                         local profitAtMargin = marginAt and (ev.expected - (ev.cost - line.total + marginAt * line.qty)) or nil
@@ -905,7 +927,7 @@ local function PaintDetail(d)
         end
         if not d.de and F.Number(ev.expected) and ev.expected > 0 and F.Number(ev.cost) then   -- (an Enchanting row's one line is the whole)
             local calc = F.Calc
-            local marginPct = F.Integer(F.db.margin, 0, 100) and F.db.margin or 10
+            local marginPct = F.Integer(F.db.margin, 0, 999) and F.db.margin or 10
             local band = ev.margin and calc.MarginBand(ev.margin) or "green"
             local cutoff = ev.expected / (1 + marginPct / 100)   -- the most all the materials may cost and still make the Margin set
             lines[#lines + 1] = {
@@ -1161,6 +1183,9 @@ local function NoteText(info)
         if (why.old or 0) > 0 then parts[#parts + 1] = why.old .. " with a price older than Max age" end
         notes[#notes + 1] = "Hidden: " .. table.concat(parts, ", ") .. " (an item can miss several)."
     end
+    if info.disenchant and (F.Disenchant.unlisted or 0) > 0 then
+        notes[#notes + 1] = F.Disenchant.unlisted .. " new price(s) since this list was built: Refresh lists them."
+    end
     if (info.assumedTime or 0) > 0 then notes[#notes + 1] = "Per hour assumes " .. F.DEFAULT_CAST .. " s per craft until measured." end
     return table.concat(notes, " ")
 end
@@ -1193,8 +1218,8 @@ function TIPS.ownedFree()
     return { "Owned mats free", { "Mats you hold", F.Style.Paint(F.Style.GREEN, "free") }, { "Needs", "enough for 1 craft" } }
 end
 function TIPS.showAH()
-    if (F.db and F.db.sellAH == true) or F.SellDE() then return { "Vendor column", { "Adds", "vendor price" } } end
-    return { "AH column", { "Adds", "AH price (last scan)" } }
+    if (F.db and F.db.sellAH == true) or F.SellDE() then return { "Other price", { "Adds", "vendor price" } } end
+    return { "Other price", { "Adds", "AH price (last scan)" } }
 end
 function TIPS.sellAH()
     return { "Sell at AH", { "Values by", "AH price" }, { "Minus", AHCut() .. " cut" }, { "Replaces", "vendor price" } }
@@ -1219,9 +1244,9 @@ end
 function TIPS.margin()
     local St = F.Style
     if state.de then
-        return { "Min return", { "Lists", "items returning this or more" }, { "Range", St.Percent("0-100%") }, { "Also", "caps [A]'s price" } }
+        return { "Min return", { "Lists", "items returning this or more" }, { "Range", St.Percent("0-999%") }, { "Also", "caps [A]'s price" } }
     end
-    return { "Min margin", { "[A] price limits", "leave this profit" }, { "Range", St.Percent("0-100%") }, { "Used", "the lower of this and Confidence" } }
+    return { "Min margin", { "[A] price limits", "leave this profit" }, { "Range", St.Percent("0-999%") }, { "Used", "the lower of this and Confidence" } }
 end
 function TIPS.buy()
     return { "Buy for", { "[A] buys", "this many crafts" }, { "Empty", "Max" }, { "Capped by", "budget, price limits" } }
@@ -1240,6 +1265,12 @@ function TIPS.quality()
 end
 function TIPS.level()
     return { "Level", { "Shows", "one item level range" }, { "Pick a quality", "to see its results" } }
+end
+function TIPS.refresh()
+    return { "Refresh", { "Rebuilds", "the list from saved prices" }, { "Auction house", "not asked: scan with Auctionator" } }
+end
+function TIPS.luck()
+    return { "Luck", { "Shows", "crafts, extras, AH sales" }, { hint = "Click: Open the luck window" } }
 end
 function TIPS.search()
     return { "Search", { "Matches", "part of a name" }, { "Esc", "clears" } }
@@ -1261,15 +1292,23 @@ end
 
 local function RangeEntries()
     local found, list = {}, {}
+    local function Add(bracket)
+        local key = U.RangeKey(bracket)
+        if not found[key] then
+            found[key] = { key = key, low = bracket[1], high = bracket[2], bracket = bracket }
+            list[#list + 1] = found[key]
+        end
+    end
+    -- every range of an item in the scan (the list holds only the ones that pay: Disenchant.lua info.ranges, per quality) ...
+    for quality, byKey in pairs(state.ranges or {}) do
+        if not state.deQuality or quality == state.deQuality then
+            for _, bracket in pairs(byKey) do Add(bracket) end
+        end
+    end
+    -- ... and any a listed row has
     for _, row in ipairs(state.all or {}) do
         local bracket = row.de and row.de.bracket
-        if bracket and (not state.deQuality or (row.item and row.item.quality == state.deQuality)) then
-            local key = U.RangeKey(bracket)
-            if not found[key] then
-                found[key] = { key = key, low = bracket[1], high = bracket[2], bracket = bracket }
-                list[#list + 1] = found[key]
-            end
-        end
+        if bracket and (not state.deQuality or (row.item and row.item.quality == state.deQuality)) then Add(bracket) end
     end
     table.sort(list, function(a, b)
         if a.low ~= b.low then return a.low < b.low end
@@ -1309,6 +1348,12 @@ local function QualityText(quality)
     return F.Style.QualityCode(quality) .. QUALITY_NAMES[quality] .. "|r"
 end
 
+-- The build of the Enchanting list reports how far it is (Disenchant.lua Step): only the empty-list text changes.
+function U.Progress(progress)
+    if not (frame and state.de and state.building and frame:IsShown()) then return end
+    frame.empty:SetText(string.format("Building the list... %d%%", math.floor((F.Number(progress) and progress or 0) * 100 + 0.5)))
+end
+
 function U.Refresh()
     if not frame or not frame:IsShown() then return end
     local db = F.db
@@ -1319,6 +1364,11 @@ function U.Refresh()
     local list, info = F.BuildRows(tab)
     state.proc = info.proc
     state.de = info.disenchant == true
+    state.building = info.building == true   -- the Enchanting list is still being built (Disenchant.lua D.Rows)
+    if state.de and not state.deLoaded then   -- the Quality and Level chosen last time
+        state.deLoaded = true
+        state.deQuality, state.deRange = db.deQuality, db.deRange
+    end
     local spec = U.BarSpec(tab)
     if #spec ~= barRows then   -- (another number of toolbar rows: everything under them moves)
         SetBarRows(#spec)
@@ -1327,6 +1377,7 @@ function U.Refresh()
         frame.empty:SetPoint("TOP", frame, "TOP", 0, -(ROWS_Y + 50))
     end
     state.all = state.de and list or nil   -- (every item worked out, for the level dropdown's entries)
+    state.ranges = state.de and info.ranges or nil
     for key, button in pairs(frame.tabs) do
         button.selected = key == tab
         PaintTab(button)
@@ -1352,7 +1403,7 @@ function U.Refresh()
         local keep
         if state.de then
             -- the Enchanting tab: only what returns at least the Margin on its price
-            local need = (F.Integer(db.margin, 0, 100) and db.margin or 10) / 100
+            local need = (F.Integer(db.margin, 0, 999) and db.margin or 10) / 100
             local least = (F.Number(db.minProfitCopper) and db.minProfitCopper >= 0) and db.minProfitCopper or 100   -- copper
             local odds = F.Integer(db.minOdds, 0, 100) and db.minOdds or 30
             local noLoss = row.ev.profit > 0
@@ -1383,6 +1434,7 @@ function U.Refresh()
         end
         if keep then shown[#shown + 1] = row end
     end
+    if info.disenchant and info.stats then why.loss = info.stats.losing or why.loss end   -- (the build counts the items that lose money: the list does not hold them)
     local revision = info.disenchant and F.Disenchant.revision or nil
     if info.disenchant then
         -- items searched for and not found are taken out of the list as drawn, the rest stays where it is
@@ -1413,13 +1465,23 @@ function U.Refresh()
         else
             for _, d in ipairs(change.rows) do d.cells = Cells(d, info.rank) end
         end
+        -- an Enchanting row whose price moved so that it no longer pays leaves the list at once: a losing item is never shown (rows are not
+        -- added or re-sorted here, only taken out)
+        if info.disenchant then
+            local removed = false
+            for index = #shown, 1, -1 do
+                local profit = shown[index].ev and shown[index].ev.profit
+                if profit ~= nil and profit <= 0 then table.remove(shown, index); removed = true end
+            end
+            if removed then state.page = math.max(1, math.min(state.page, Pages())) end
+        end
     end
 
     if not frame.budgetBox.focused then
         frame.budgetBox:SetText(db.budget and tostring(db.budget) or "")
     end
     if not frame.oddsBox.focused then frame.oddsBox:SetText(tostring(F.Integer(db.odds, 50, 99) and db.odds or 90)) end
-    if not frame.marginBox.focused then frame.marginBox:SetText(tostring(F.Integer(db.margin, 0, 100) and db.margin or 10)) end
+    if not frame.marginBox.focused then frame.marginBox:SetText(tostring(F.Integer(db.margin, 0, 999) and db.margin or 10)) end
     if not frame.buyBox.focused then frame.buyBox:SetText(db.buyCrafts and tostring(db.buyCrafts) or "") end
     frame.maxCheck.mark:SetShown(db.buyCrafts == nil)
     frame.profitOnly.mark:SetShown(db.profitOnly == true)
@@ -1428,7 +1490,6 @@ function U.Refresh()
     frame.sellAH.mark:SetShown(db.sellAH == true)
     frame.sellDE.mark:SetShown(db.sellDE == true)
     frame.known.mark:SetShown(db.showUnlearned ~= true)
-    frame.showAH.label:SetText((db.sellAH == true or F.SellDE()) and "Vendor column" or "AH column")
     frame.marginLabel:SetText(state.de and "Min return:" or "Min margin:")
     frame.qualityButton.label:SetText(QualityText(state.deQuality))
     frame.levelButton.label:SetText(state.deRange and ("Level " .. state.deRange) or "All levels")
@@ -1475,10 +1536,19 @@ function U.Refresh()
     if #shown == 0 then
         if info.unavailable then
             frame.empty:SetText("Needs Auctionator with a scan of the auction house.")
+        elseif info.building then
+            frame.empty:SetText(string.format("Building the list... %d%%", math.floor((F.Number(info.progress) and info.progress or 0) * 100 + 0.5)))
         elseif state.search ~= "" and #list > 0 then
             frame.empty:SetText("Nothing in the list matches \"" .. frame.searchBox:GetText() .. "\". Clear the search box to see the rest.")
         elseif info.disenchant and info.count == 0 then
-            frame.empty:SetText(info.loading > 0 and "Loading item data." or "No gear in Auctionator's last scan disenchants for a value. Scan the auction house.")
+            local stale = info.stats and info.stats.stale or 0
+            if info.loading > 0 then
+                frame.empty:SetText("Loading item data (" .. info.loading .. " items).")
+            elseif stale > 0 then   -- (every price is older than a day: Auctionator keeps them, this list does not use them)
+                frame.empty:SetText(stale .. " price(s) are older than a day and left out. Scan the auction house.")
+            else
+                frame.empty:SetText("No gear in Auctionator's last scan disenchants for a value. Scan the auction house.")
+            end
         elseif info.count == 0 then
             local name = F.PROFESSIONS[info.prof].name
             frame.empty:SetText("No " .. name:lower() .. " recipes saved. Open your " .. name .. " window once.")
@@ -1490,7 +1560,7 @@ function U.Refresh()
                 if row.ev.margin and (not best or row.ev.margin > best) then best = row.ev.margin end
             end
             frame.empty:SetText(string.format("Nothing meets Min return %d%%, Min profit %s, Min odds %d%% and Max age %dd%s. %d item(s) are listed. Loosen the filters.",
-                F.Integer(db.margin, 0, 100) and db.margin or 10, F.Money(minProfit),
+                F.Integer(db.margin, 0, 999) and db.margin or 10, F.Money(minProfit),
                 F.Integer(db.minOdds, 0, 100) and db.minOdds or 30, F.Disenchant.MaxAge(),
                 best and string.format("; the best returns %+d%%", math.floor(best * 100 + 0.5)) or "", #list))
         elseif db.profitOnly and not state.de then
@@ -1525,6 +1595,10 @@ function U.Refresh()
     -- A tooltip open on a row is rebuilt with the new figures (prices, counts) instead of being left stale or
     -- closed by the redraw; the row under the mouse may now hold another recipe after a re-sort. One whose row
     -- is gone is closed.
+    U.RedoTips()
+end
+
+function U.RedoTips()
     for _, row in ipairs(rows) do
         local over = row.tipHover == true   -- (the pointer is on the item name or the Profit cell)
         if row:IsShown() and row.data then
@@ -1560,14 +1634,29 @@ function ShowTip(row, refresh)
         tip:AddLine(F.Catalog.Status(d.recipe, F.Tab()))
         local source = F.Catalog.SourceLine(d.recipe)
         if source then tip:AddLine(source) end
+        if F.String(d.recipe.when) then St.Note(tip, d.recipe.when) end   -- (a season or a release that is not out yet: Catalog.lua `when`)
         local bind = F.Catalog.Bind(d.recipe)   -- BoP or BoE, so a drop is not a surprise
         if bind then   -- earthy green: Binds on Equip (can be bought from a player), earthy red: Binds on Pickup (the hard one); other: grey
             local code = (bind == "Binds on Equip" and St.MOSSCODE) or (bind == "Binds on Pickup" and St.RUSTCODE) or St.GREYTEXT
             tip:AddLine(St.Paint(code, bind), 1, 1, 1)
         end
     end
-    St.Line(tip, "Makes", St.Count(ev.yield == math.floor(ev.yield) and tostring(ev.yield) or string.format("%.1f", ev.yield))
-        .. (d.item.id and (" x " .. St.ItemLabel(d.item.id)) or ""))
+    -- What the recipe makes is its name; only a yield other than 1 (two per craft, or the extra-result chance on top) is worth a line.
+    if F.Number(ev.yield) and math.abs(ev.yield - 1) > 1e-9 then
+        St.Line(tip, "Makes", St.Count(ev.yield == math.floor(ev.yield) and tostring(ev.yield) or string.format("%.1f", ev.yield)))
+    end
+    -- Requires: the materials, one per line (the first choice of a slot that accepts several items), only while Shift is held
+    local slots = d.recipe and d.recipe.r
+    local shift = type(IsShiftKeyDown) == "function" and IsShiftKeyDown() == true
+    if shift and type(slots) == "table" and #slots > 0 then
+        tip:AddLine(St.Grey("Requires"), 1, 1, 1)
+        for _, slot in ipairs(slots) do
+            local id = type(slot) == "table" and type(slot.ids) == "table" and slot.ids[1] or nil
+            if F.Integer(id, 1, 2147483647) then
+                tip:AddLine("  " .. St.ItemQty(id, F.ItemMeta(id).name or ("Item " .. id), F.QtyText(tonumber(slot.qty) or 1), St.SAGE), 1, 1, 1)
+            end
+        end
+    end
     if d.via and #d.via > 0 then   -- (a material the player crafts instead of buying)
         for _, v in ipairs(d.via) do
             tip:AddDoubleLine("You craft " .. St.Paint(St.SAGE, F.QtyText(v.units) .. "x") .. " " .. St.ItemLabel(v.id),
@@ -1575,7 +1664,8 @@ function ShowTip(row, refresh)
         end
     end
     if ev.status == "noprice" then St.Note(tip, "A material has no price yet, so no profit is shown.") end
-    -- what the clicks do, one short line each
+    -- what the clicks do, one short line each, set apart from the facts above by an empty line
+    tip:AddLine(" ")
     if d.unknown then
         local _, vendor = F.Catalog.Vendor(d.recipe)
         if vendor and vendor.map then tip:AddLine("Ctrl-click: Pin the vendor", 0.5, 0.8, 1) end
@@ -1583,6 +1673,7 @@ function ShowTip(row, refresh)
         tip:AddLine("Click: Open recipe", 0.5, 0.8, 1)
     end
     tip:AddLine("Shift-click: Price limits", 0.5, 0.8, 1)
+    tip:AddLine("Shift: Requires", 0.5, 0.8, 1)
     ShowLines(row, tip, refresh)
 end
 
@@ -1687,6 +1778,17 @@ local function CycleRank()
     U.Refresh()
 end
 
+-- The number "Buy for" starts from when Max is unticked: what the lists buy now, the most any listed recipe's [A] would buy within the
+-- budget and the price limits (no fixed number); the most there is when none can be worked out.
+function U.StartBuyCrafts()
+    local most = 0
+    for _, entry in ipairs(data and data.list or {}) do
+        local ctx = F.PlanShopping(entry)
+        if ctx.plan and F.Number(ctx.plan.crafts) and ctx.plan.crafts > most then most = ctx.plan.crafts end
+    end
+    return most >= 1 and math.min(math.floor(most), 100000) or 100000
+end
+
 local function Toggle(key)
     F.db[key] = not (F.db[key] == true)
     -- what a result is worth is one basis at a time: the vendor's price, the auction house's, or its disenchant
@@ -1780,6 +1882,7 @@ local function BuildDropdowns()
     end, function(value)
         state.deQuality = value or nil
         state.deRange = nil   -- (the ranges are the quality's own)
+        F.db.deQuality, F.db.deRange = state.deQuality, nil   -- (kept between sessions)
         state.page = 1
         U.Refresh()
     end, TIPS.quality)
@@ -1794,6 +1897,7 @@ local function BuildDropdowns()
         return list
     end, function(value)
         state.deRange = value or nil
+        F.db.deRange = state.deRange
         state.page = 1
         U.Refresh()
     end, TIPS.level)
@@ -1807,6 +1911,7 @@ end
 ---------------------------------------------------------------------------
 
 local CAPTION_W, BAR_GAP = 58, 12
+local SLOT_W = 124   -- the checkboxes sit in fixed columns of this width, the same on every row, so they line up and never move when a label or a neighbour changes
 
 function U.BarSpec(tab)
     local def = F.PROFESSIONS[tab] or {}
@@ -1837,7 +1942,7 @@ end
 -- part to the window's right edge and the others leftwards of it.
 local function MakeControl(name, parts, options)
     options = options or {}
-    local ctl = { name = name, parts = parts, side = options.side, show = options.show, fit = options.fit }
+    local ctl = { name = name, parts = parts, side = options.side, show = options.show, fit = options.fit, slot = options.slot }
     if ctl.side == "right" then
         for index = #parts - 1, 1, -1 do
             parts[index].w:ClearAllPoints()
@@ -1887,12 +1992,12 @@ local function BuildBar(p)
     for index = 1, 3 do
         frame.captions[index] = Text(frame, nil, GREY)
     end
-    CheckControl("profitOnly", frame.profitOnly)
-    CheckControl("known", frame.known, { show = function() return F.Catalog.Has(F.Tab()) end })
-    CheckControl("ownedFree", frame.ownedFree)
-    CheckControl("showAH", frame.showAH)
-    CheckControl("sellAH", frame.sellAH)
-    CheckControl("sellDE", frame.sellDE, { show = function()
+    CheckControl("profitOnly", frame.profitOnly, { slot = 1 })
+    CheckControl("known", frame.known, { slot = 2, show = function() return F.Catalog.Has(F.Tab()) end })
+    CheckControl("ownedFree", frame.ownedFree, { slot = 1 })
+    CheckControl("showAH", frame.showAH, { slot = 2 })
+    CheckControl("sellAH", frame.sellAH, { slot = 3 })
+    CheckControl("sellDE", frame.sellDE, { slot = 4, show = function()
         return (F.PROFESSIONS[F.Tab()] or {}).gear == true and F.ProfessionKnown("enchanting")   -- (only a character with Enchanting can disenchant, and only gear)
     end })
     CheckControl("max", frame.maxCheck)
@@ -1942,6 +2047,7 @@ function U.PlaceBar(spec)
             local ctl = frame.ctl[name]
             if ctl and (not ctl.show or ctl.show()) then
                 active[name] = true
+                if ctl.slot then x = SIDE + 6 + CAPTION_W + (ctl.slot - 1) * SLOT_W end   -- (a checkbox: its own fixed column)
                 PlaceControl(ctl, "LEFT", x, y)
                 x = x + ctl.width() + BAR_GAP
             end
@@ -1962,6 +2068,8 @@ local function Build()
     frame = CreateFrame("Frame", "DeffarProfessionProfitFrame", UIParent)
     frame:SetSize(MIN_WIDTH, FOOT_Y + 90)
     frame:SetFrameStrata("DIALOG")
+    frame:RegisterEvent("MODIFIER_STATE_CHANGED")   -- Shift pressed or released over a recipe name: its tooltip is redrawn (Requires shows while Shift is held)
+    frame:SetScript("OnEvent", function() if frame:IsShown() then U.RedoTips() end end)
     frame:SetToplevel(true)
     frame:SetClampedToScreen(true)
     frame:SetMovable(true)
@@ -1991,17 +2099,11 @@ local function Build()
 
     -- The luck window: a button reading [L] at the top left, exactly where and as wide as the luck window's
     -- back button (22 x 18), in the addon's own flat style.
-    -- It does what the footer's Luck button does: this window hides and the luck window takes its place.
+    -- The one way into the luck window from here (the footer has no Luck button): this window hides and the luck window takes its place.
     frame.luckTop = MakeButton(frame, "[L]", 22, 18)
     frame.luckTop:SetPoint("TOPLEFT", 8, -6)
     frame.luckTop:SetScript("OnClick", function() F.LuckUI.OpenFrom(frame) end)
-    frame.luckTop:HookScript("OnEnter", function(self)
-        if type(GameTooltip) ~= "table" then return end
-        GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
-        GameTooltip:ClearLines()
-        GameTooltip:AddLine("Luck: crafts, extras and what the auctions brought in", 1, 1, 1, true)
-        GameTooltip:Show()
-    end)
+    frame.luckTop:HookScript("OnEnter", function(self) U.ShowTip(self, U.TIPS.luck) end)
     frame.luckTop:HookScript("OnLeave", function() if type(GameTooltip) == "table" then GameTooltip:Hide() end end)
     local title = Text(frame, "GameFontNormal", GOLD)
     title:SetPoint("TOPLEFT", 36, -10)
@@ -2022,7 +2124,7 @@ local function Build()
         function() Toggle("profitOnly") end)
     frame.ownedFree = MakeCheck(frame, "Owned mats free", U.TIPS.ownedFree,
         SIDE + 6 + 124, -CHECK_Y, function() Toggle("ownedFree") end)
-    frame.showAH = MakeCheck(frame, "AH column", U.TIPS.showAH,
+    frame.showAH = MakeCheck(frame, "Other price", U.TIPS.showAH,
         SIDE + 6 + 248, -CHECK_Y, function() Toggle("showAH") end)
     frame.sellAH = MakeCheck(frame, "Sell at AH", U.TIPS.sellAH,
         SIDE + 6 + 372, -CHECK_Y, function() Toggle("sellAH") end)
@@ -2049,6 +2151,7 @@ local function Build()
         box:SetScript("OnEditFocusGained", function(self)
             self.focused = true
             for _, edge in ipairs(self.edges) do Color(edge, GOLD) end
+            self:HighlightText()   -- a click selects the whole number, so typing replaces it
         end)
         box:SetScript("OnEditFocusLost", function(self)
             self.focused = false
@@ -2097,10 +2200,10 @@ local function Build()
     marginLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE + 6 + 344, -(BUDGET_Y + 3))
     marginLabel:SetText("Min margin:")
     frame.marginBox = MakeInput(SIDE + 6 + 344 + 48, 34, 3,
-        function() return tostring(F.Integer(F.db.margin, 0, 100) and F.db.margin or 10) end,
+        function() return tostring(F.Integer(F.db.margin, 0, 999) and F.db.margin or 10) end,
         function(text)
             local number = tonumber(text)
-            if F.Integer(number, 0, 100) then F.db.margin = number end
+            if F.Integer(number, 0, 999) then F.db.margin = number end
         end,
         U.TIPS.margin)
     local marginPercent = Text(frame, nil, GREY)
@@ -2184,7 +2287,7 @@ local function Build()
     frame.maxCheck = MakeCheck(frame, "Max", U.TIPS.max,
         SIDE + 6 + 50 + 56 + 50, -BUY_Y, function()
             if F.db.buyCrafts == nil then
-                F.db.buyCrafts = F.Integer(F.db.crafts, 1, 100000) and F.db.crafts or 100   -- a number to start from
+                F.db.buyCrafts = U.StartBuyCrafts()   -- a number to start from: what the lists buy now
             else
                 F.db.buyCrafts = nil
             end
@@ -2206,10 +2309,11 @@ local function Build()
     search:SetFontObject("GameFontHighlightSmall")
     search:SetAutoFocus(false)
     search:SetMaxLetters(40)
-    search:SetTextInsets(5, 5, 0, 0)
-    search:SetScript("OnEditFocusGained", function(self) for _, edge in ipairs(self.edges) do Color(edge, GOLD) end end)
+    search:SetTextInsets(5, 18, 0, 0)   -- (room for the x at the right)
+    U.AddClear(search)
+    search:SetScript("OnEditFocusGained", function(self) for _, edge in ipairs(self.edges) do Color(edge, GOLD) end; self:HighlightText() end)
     search:SetScript("OnEditFocusLost", function(self) for _, edge in ipairs(self.edges) do Color(edge, {0.34, 0.34, 0.37}) end end)
-    search:SetScript("OnTextChanged", function(self) ApplySearch(self:GetText()) end)
+    search:SetScript("OnTextChanged", function(self) U.ClearShown(self); ApplySearch(self:GetText()) end)
     search:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
     search:SetScript("OnEscapePressed", function(self)
         if self:GetText() ~= "" then self:SetText("") else self:ClearFocus() end   -- (SetText runs OnTextChanged)
@@ -2471,36 +2575,30 @@ local function Build()
     frame.pageText = Text(frame, nil, GREY)
     frame.pageText:SetPoint("TOPLEFT", frame, "TOPLEFT", SIDE + 70, -(FOOT_Y + 11))
     -- opens the luck window (/dpp luck), at the right end of the page row
-    frame.luckButton = MakeButton(frame, "Luck", 64, 18)
-    frame.luckButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -SIDE, -(FOOT_Y + 8))
-    frame.luckButton:SetScript("OnClick", function() F.LuckUI.OpenFrom(frame) end)   -- this window hides, the luck window takes its place
     -- Enchanting tab: rebuilds the list from Auctionator's prices (it otherwise holds still, only its numbers update)
     frame.refreshButton = MakeButton(frame, "Refresh", 64, 18)
-    frame.refreshButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -(SIDE + 68), -(FOOT_Y + 8))
+    frame.refreshButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -SIDE, -(FOOT_Y + 8))
     frame.refreshButton:SetScript("OnClick", function(self)
-        F.Disenchant.Invalidate(); state.page = 1; U.Refresh()
-        -- feedback: the list is rebuilt from Auctionator's saved prices (no auction-house query), so it is instant
-        local info = data and data.info
-        if info and info.disenchant then
-            F.Print(string.format("Enchanting list rebuilt from Auctionator's saved prices: %s prices read%s, %d items worked out, %d shown%s. This does not search the auction house: scan it with Auctionator for new prices.",
-                tostring(info.keys or "?"), info.ms and string.format(" in %.2f s", info.ms / 1000) or "", info.stats and info.stats.listed or info.count,
-                data.list and #data.list or 0, info.scanAt and (". Last full scan started " .. AgoText(F.Now() - info.scanAt)
-                    .. (info.newest and (info.newest == 0 and ", prices seen today" or (", newest price " .. info.newest .. " d old")) or "")) or ""))
-        end
-        self.label:SetText("Refreshed")   -- the button says so for a moment
-        if type(C_Timer) == "table" and type(C_Timer.After) == "function" then
-            C_Timer.After(1.5, function() self.label:SetText("Refresh") end)
-        else
-            self.label:SetText("Refresh")
-        end
+        -- a fresh list is built in the background (the one shown stays until it is ready); the button and a chat line say when it is
+        self.label:SetText("Refreshing")
+        F.Disenchant.Refresh(function(info)
+            if info and info.disenchant then
+                F.Print(string.format("Enchanting list rebuilt from Auctionator's saved prices: %s prices read%s, %d items worked out, %d pay%s. This does not search the auction house: scan it with Auctionator for new prices.",
+                    tostring(info.keys or "?"), info.ms and string.format(" in %.2f s", info.ms / 1000) or "", info.stats and info.stats.listed or info.count, info.count,
+                    info.scanAt and (". Last full scan started " .. AgoText(F.Now() - info.scanAt)
+                        .. (info.newest and (info.newest == 0 and ", prices seen today" or (", newest price " .. info.newest .. " d old")) or "")) or ""))
+            end
+            self.label:SetText("Refreshed")   -- the button says so for a moment
+            if type(C_Timer) == "table" and type(C_Timer.After) == "function" then
+                C_Timer.After(1.5, function() self.label:SetText("Refresh") end)
+            else
+                self.label:SetText("Refresh")
+            end
+        end)
+        state.page = 1
+        U.Refresh()
     end)
-    frame.refreshButton:HookScript("OnEnter", function(self)
-        if type(GameTooltip) ~= "table" then return end
-        GameTooltip:SetOwner(self, "ANCHOR_CURSOR_RIGHT")
-        GameTooltip:ClearLines()
-        GameTooltip:AddLine("Rebuilds the list from the prices Auctionator has saved. It does not ask the auction house, which is why it is instant: scan with Auctionator to get new prices. Until you press it the items stay where they are and only their numbers update, so a search does not move the list.", 1, 1, 1, true)
-        GameTooltip:Show()
-    end)
+    frame.refreshButton:HookScript("OnEnter", function(self) U.ShowTip(self, U.TIPS.refresh) end)
     frame.refreshButton:HookScript("OnLeave", function() if type(GameTooltip) == "table" then GameTooltip:Hide() end end)
     -- Cooldown of Auctionator's full scan, to the left of Refresh: live while the Enchanting tab shows
     frame.scanText = Text(frame, nil, GREY, "RIGHT")
@@ -2530,7 +2628,7 @@ local function Build()
 end
 
 -- The flat widgets and colours, shared with the luck window (LuckUI.lua) instead of copied there.
-U.W = { ShowTip = ShowControlTip, SetReady = SetReady, ABTN = ABTN, MakeCheck = MakeCheck, KeepRowTipOff = KeepRowTipOff, MakeNativeButton = MakeNativeButton, MakeIconTip = MakeIconTip, MakeTab = MakeTab, MakeTabStrip = MakeTabStrip, LayoutTabs = LayoutTabs, PaintTab = PaintTab, TAB_SHIFT = TAB_SHIFT, RememberTip = RememberTip, NewTip = NewTip, ShowLines = ShowLines, PlaceTopLeft = PlaceTopLeft, Box = Box, Text = Text, SetText = SetText, MakeButton = MakeButton, PaintButton = PaintButton, Color = Color,
+U.W = { AddClear = U.AddClear, ClearShown = U.ClearShown, ShowTip = ShowControlTip, SetReady = SetReady, ABTN = ABTN, MakeCheck = MakeCheck, KeepRowTipOff = KeepRowTipOff, MakeNativeButton = MakeNativeButton, MakeIconTip = MakeIconTip, MakeTab = MakeTab, MakeTabStrip = MakeTabStrip, LayoutTabs = LayoutTabs, PaintTab = PaintTab, TAB_SHIFT = TAB_SHIFT, RememberTip = RememberTip, NewTip = NewTip, ShowLines = ShowLines, PlaceTopLeft = PlaceTopLeft, Box = Box, Text = Text, SetText = SetText, MakeButton = MakeButton, PaintButton = PaintButton, Color = Color,
     GOLD = GOLD, TEXT = TEXT, GREY = GREY, GREEN = GREEN, RED = RED, ORANGE = ORANGE, DIVIDER = DIVIDER,
     QUALITY = QUALITY, UNKNOWN_ICON = UNKNOWN_ICON }
 
@@ -2548,7 +2646,6 @@ function U.Show()
     if F.HookAuctionator then F.HookAuctionator() end   -- redraw by itself when Auctionator learns new prices (Core.lua)
     state.page = 1
     state.expanded = nil
-    if F.Tab() == "enchanting" and F.Disenchant then F.Disenchant.Invalidate() end   -- a fresh list each time the window is opened
     frame:Show()
     U.Refresh()
 end
@@ -2570,7 +2667,6 @@ end
 -- Switches the list to a profession's tab (a click on a tab, or /dpp cooking | engineering); true when it exists.
 function U.SelectTab(key)
     if not F.PROFESSIONS[key] then return false end
-    if key == "enchanting" and F.db.tab ~= "enchanting" then F.Disenchant.Invalidate() end   -- a fresh list on arriving
     F.db.tab = key
     state.page, state.expanded = 1, nil
     if type(GameTooltip) == "table" then GameTooltip:Hide() end

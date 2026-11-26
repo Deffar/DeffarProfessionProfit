@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.45.0
+- **Engineering and Tailoring catalogs.** Untick **Known recipes** to list the recipes you have not learned: 198 Engineering, 380 Tailoring. Each shows its source (trainer, vendor, quest, drop), bind type and materials. Vendors are named per side and can be pinned on the map with Ctrl-click (Mount Hyjal and the Skyborn zone included).
+- Cooking recipes that cannot be had yet say so: Winter Veil (Egg Nog, Gingerbread Cookie), summer fish (Hot Smoked Bass), Ahn'Qiraj (Dirge's Kickin' Chimaerok Chops).
+- **Hotfix alert.** A recipe whose materials or yield changed since the last time is said in chat: `DPP: Skywall Souffle changed: Small Egg 2 -> 1`.
+- **Enchanting:**
+  - Items with a random suffix are no longer listed twice, once without the suffix.
+  - The Level dropdown lists every range in the scan, not only ranges with a paying item.
+  - The list is built in the background, so opening the tab does not lag. It changes only when you press **Refresh**: browsing or searching the auction house does not rebuild it.
+  - An item whose data was still loading is asked for again every 5 seconds, and the list fills in by itself.
+  - Quality and Level are saved between sessions.
+  - An item that loses money is never shown; one whose price turns it into a loss leaves at once.
+  - An item the `[A]` search marked as gone comes back on its next price (the mark lasts a day).
+  - New: `/dpp why <name or id>` says why an item is or is not in the list.
+- **Hovers.** The recipe tooltip has no "Makes 1x [item]"; **Requires** lists the materials while **Shift** is held, with an empty line above the click hints. Create All's value line says `Sells:` (`AH:` with Shift). The Luck window's tooltips are shorter, with the materials used on Shift.
+- **Vendor "+":** stays visible and greyed out while it buys.
+- **`[A]` lists:** when no unit is at or under the limit, the quantity box is set to 0.
+- **Boxes:** a click selects all the text; the search boxes have a small **x** to clear them; Min margin goes up to 999%.
+- **Create All:** counts only what is in your bags, and no longer lists Blacksmithing recipes in the Engineering window. The 100-craft default is gone (as many as the budget allows).
+- Removed: `/dpp crafts`, `/dpp crafttime`, the footer Luck button (the title-bar [L] stays).
+- The GitHub release zip now includes the icon and this changelog.
+
 ## 0.44.0
 - **A new toolbar.** The controls under the tabs are grouped in rows with a caption: **View**, **Value** and **Shopping** on recipe tabs, **View** and **Filters** on the Enchanting tab. They are laid out by their own width, so nothing overlaps. The shopping settings stay in view.
 - Renamed: Odds is now **Confidence**, Margin is **Min margin**. The empty Budget box says "all gold".

@@ -2,7 +2,7 @@
 -- caches, the Master Chef rank read, and the list of rows the window shows. No frames (UI.lua) and
 -- no event registration (Core.lua). The arithmetic is in Calc.lua.
 local addonName, F = ...
-F.VERSION = "0.44.0"
+F.VERSION = "0.45.0"
 F.CALLER = addonName   -- Auctionator wants the calling addon's name as its first argument
 F.eventIssues = {}
 
@@ -290,9 +290,16 @@ function F.ItemMeta(id)
             if m.bindRead and m.bind ~= nil then saved.bind = m.bind end   -- (only what the game itself said: a change replaces the kept value)
         end
     end
-    if (m.sell == nil or not m.name) and not m.requested and F.Has(C_Item, "RequestLoadItemDataByID") then
-        m.requested = true   -- ask once; GET_ITEM_INFO_RECEIVED refreshes the window
-        C_Item.RequestLoadItemDataByID(id)
+    if (m.sell == nil or not m.name) and F.Has(C_Item, "RequestLoadItemDataByID") then
+        -- GET_ITEM_INFO_RECEIVED refreshes the window. Asked again every few seconds (up to 5 more times) while the item has still not come:
+        -- thousands of requests made at once on a build of the Enchanting list are not all answered (human report 2026-11-26: the list stayed
+        -- empty until the items were shown in the auction house panel, which loads them itself)
+        local now = type(GetTime) == "function" and GetTime() or 0
+        if not m.requested or ((m.asked or 0) < 5 and now - (m.askedAt or now) >= 5) then
+            if m.requested then m.asked = (m.asked or 0) + 1 end
+            m.requested, m.askedAt = true, now
+            C_Item.RequestLoadItemDataByID(id)
+        end
     end
     return m
 end
@@ -301,11 +308,46 @@ function F.IsFood(m)
     return m ~= nil and m.class == F.FOOD_CLASS and m.subclass == F.FOOD_SUBCLASS
 end
 
+-- What the character carries: the bags only. A craft, the vendor "+" and "Owned mats free" must not count what sits in the bank, so every
+-- optional place is switched off by name (C_Item.GetItemCount(item, includeBank, includeUses, includeReagentBank, includeAccountBank)):
+-- a Create All that counted the bank started a craft the bags could not make (human report, 2026-11-25). Whether Forever's own default
+-- already left them out is unknown (FOR-0207, a HYPOTHESIS): asking for them off is right either way.
 function F.Owned(id)
     local count
-    if F.Has(C_Item, "GetItemCount") then count = C_Item.GetItemCount(id)
-    elseif type(GetItemCount) == "function" then count = GetItemCount(id) end
+    if F.Has(C_Item, "GetItemCount") then count = C_Item.GetItemCount(id, false, false, false, false)
+    elseif type(GetItemCount) == "function" then count = GetItemCount(id, false, false) end
     return F.Integer(count, 0, MAX_INT) and count or 0
+end
+
+-- What each way of counting says about one item (/dpp owned): the game's own count as it stands, with every optional place off, with the
+-- bank on, and the slots of the carried bags added up by hand. The addon uses the second (F.Owned).
+function F.OwnedReport(id)
+    local lines = {}
+    local function Say(label, count) lines[#lines + 1] = string.format("item %d, %s: %s", id, label, count == nil and "no answer" or tostring(count)) end
+    if F.Has(C_Item, "GetItemCount") then
+        Say("GetItemCount(item)", C_Item.GetItemCount(id))
+        Say("GetItemCount(item, false x4), what the addon uses", C_Item.GetItemCount(id, false, false, false, false))
+        Say("GetItemCount(item, bank on)", C_Item.GetItemCount(id, true, false, true, true))
+    else
+        Say("C_Item.GetItemCount", nil)
+    end
+    local container = _G.C_Container
+    if F.Has(container, "GetContainerNumSlots") and F.Has(container, "GetContainerItemInfo") then
+        local last = F.Integer(_G.NUM_BAG_SLOTS, 0, 20) and _G.NUM_BAG_SLOTS or 4
+        local total = 0
+        for bag = 0, last do
+            local slots = container.GetContainerNumSlots(bag)
+            for slot = 1, F.Integer(slots, 0, 1000) and slots or 0 do
+                local info = container.GetContainerItemInfo(bag, slot)
+                if F.Table(info) and info.itemID == id and F.Integer(info.stackCount, 1, 100000) then total = total + info.stackCount end
+            end
+        end
+        Say("the carried bags added up slot by slot (bags 0-" .. last .. ")", total)
+    else
+        Say("the carried bags added up slot by slot", nil)
+    end
+    Say("F.Owned, what Create All counts", F.Owned(id))
+    return lines
 end
 
 ---------------------------------------------------------------------------
@@ -443,6 +485,66 @@ local function ReadReagents(schematic)
     return reagents
 end
 
+-- What a hotfix changed in a recipe: the lines that tell the player ("Small Egg 2 -> 1", "makes 1 -> 2", "+Salt x1", "-Pepper"), comparing
+-- a recipe as it was saved with the one the game gives now. Empty when nothing differs or an entry is not readable. (Plain "->": the chat font
+-- has no arrow glyph.) Blizzard changed Skywall Souffle's egg cost without a patch note, human report 2026-11-26.
+local function ReagentMap(reagents)
+    local map, order = {}, {}
+    if not F.Table(reagents) then return nil end
+    for _, slot in ipairs(reagents) do
+        if F.Table(slot) and F.Integer(slot.qty, 1, 100000) and F.Table(slot.ids) and F.Integer(slot.ids[1], 1, 2147483647) then
+            local key = slot.ids[1]
+            if not map[key] then order[#order + 1] = key; map[key] = slot.qty end
+        end
+    end
+    return map, order
+end
+
+local function ItemLabel(id)
+    return F.ItemMeta(id).name or ("Item " .. id)
+end
+
+function F.RecipeChanges(old, new)
+    local lines = {}
+    if not (F.Table(old) and F.Table(new)) then return lines end
+    local before, beforeOrder = ReagentMap(old.r)
+    local after, afterOrder = ReagentMap(new.r)
+    if not (before and after) then return lines end
+    for _, id in ipairs(beforeOrder) do
+        if not after[id] then
+            lines[#lines + 1] = "-" .. ItemLabel(id)
+        elseif after[id] ~= before[id] then
+            lines[#lines + 1] = ItemLabel(id) .. " " .. before[id] .. " -> " .. after[id]
+        end
+    end
+    for _, id in ipairs(afterOrder) do
+        if not before[id] then lines[#lines + 1] = "+" .. ItemLabel(id) .. " x" .. after[id] end
+    end
+    local function Makes(recipe)
+        local low = F.Integer(recipe.qMin, 1, 100000) and recipe.qMin or 1
+        local high = F.Integer(recipe.qMax, low, 100000) and recipe.qMax or low
+        return low == high and tostring(low) or (low .. "-" .. high)
+    end
+    if F.Integer(old.out, 1, 2147483647) and old.out ~= new.out then
+        lines[#lines + 1] = "makes " .. ItemLabel(old.out) .. " -> " .. ItemLabel(new.out)
+    elseif Makes(old) ~= Makes(new) then
+        lines[#lines + 1] = "makes " .. Makes(old) .. " -> " .. Makes(new)
+    end
+    return lines
+end
+
+-- Keeps the recipe as last seen (account-wide, db.recipeSeen: an alt does not report the same change again) and notes what differs from it.
+-- Before this check existed a recipe has no such copy: the character's own saved one is what it is compared with.
+local function Remember(id, entry, before, result)
+    local seen = F.db and F.db.recipeSeen
+    if not F.Table(seen) then return end   -- (a read-only db keeps nothing)
+    local old = seen[id]
+    if old == nil and F.Table(before) then old = before end
+    local lines = old ~= nil and F.RecipeChanges(old, entry) or {}
+    if #lines > 0 then result.changes[#result.changes + 1] = { id = id, name = entry.name, lines = lines } end
+    if seen[id] == nil or #lines > 0 then seen[id] = entry end
+end
+
 -- Which profession (other than Cooking) a profession window (C_TradeSkillUI.GetBaseProfessionInfo) is: by its skill line or its
 -- parent's, else by its name (FOR-0189, FOR-0196); nil for any other window. The answer is only used to decide which saved list
 -- a window feeds.
@@ -460,6 +562,62 @@ local function WindowProfession(info)
 end
 
 F.WindowProfession = WindowProfession   -- (Craft.lua: which saved profession the open window is)
+
+-- Whether a recipe belongs to the profession of the open window: by what the game says about the recipe itself
+-- (C_TradeSkillUI.GetTradeSkillLineForRecipe). On Forever it answers (a skill line number such as 2941, the NAME of the profession) for an
+-- Engineering recipe, read from `/dpp status` on 2026-11-25 (FOR-0208): "2941/Engineering". The name is compared with the window's profession
+-- name and the profession's own; a numeric parent (the retail answer) with the skill lines. A Blacksmithing recipe turned up on the
+-- Engineering tab, human report 2026-11-25. True when the game does not say (no such function, no answer): nothing is left out on a guess.
+local function Belongs(api, recipeID, window, key)
+    if not F.Has(api, "GetTradeSkillLineForRecipe") then return true end
+    local line, parent = api.GetTradeSkillLineForRecipe(recipeID)
+    if F.String(parent) and parent ~= "" then
+        local name = parent:lower()
+        for _, wanted in ipairs({ F.PROFESSIONS[key].name:lower(), F.Table(window) and F.String(window.professionName) and window.professionName:lower() or "" }) do
+            if wanted ~= "" and (name:find(wanted, 1, true) or wanted:find(name, 1, true)) then return true end
+        end
+        return false
+    end
+    if not F.Integer(line, 1, 2147483647) then return true end
+    local wanted = { F.PROFESSIONS[key].line, F.Table(window) and window.professionID or nil }
+    for _, known in ipairs({ wanted[1], wanted[2] }) do
+        if line == known or parent == known then return true end
+    end
+    return false
+end
+
+-- /dpp recipes: the saved recipes of a profession grouped by the skill line (and parent) the game gives each, to see which profession each
+-- belongs to and what the open window is.
+function F.RecipeLinesReport(prof)
+    local char = F.Char()
+    local api = _G.C_TradeSkillUI
+    local lines = {}
+    if not char then return { "no character data yet." } end
+    local window = F.Has(api, "GetBaseProfessionInfo") and api.GetBaseProfessionInfo() or nil
+    lines[#lines + 1] = string.format("%s: %d saved recipe(s). The open window: %s (skill line %s, parent %s).", F.PROFESSIONS[prof].name,
+        (function() local n = 0 for _ in pairs(char[F.PROFESSIONS[prof].store] or {}) do n = n + 1 end return n end)(),
+        F.Table(window) and tostring(window.professionName) or "none", F.Table(window) and tostring(window.professionID) or "?",
+        F.Table(window) and tostring(window.parentProfessionID) or "?")
+    if not F.Has(api, "GetTradeSkillLineForRecipe") then
+        lines[#lines + 1] = "the game gives no skill line per recipe (C_TradeSkillUI.GetTradeSkillLineForRecipe is missing)."
+        return lines
+    end
+    local groups, order = {}, {}
+    for id, recipe in pairs(char[F.PROFESSIONS[prof].store] or {}) do
+        local line, parent = api.GetTradeSkillLineForRecipe(id)
+        local key = tostring(line) .. "/" .. tostring(parent)
+        if not groups[key] then groups[key] = {}; order[#order + 1] = key end
+        groups[key][#groups[key] + 1] = type(recipe) == "table" and recipe.name or tostring(id)
+    end
+    table.sort(order)
+    for _, key in ipairs(order) do
+        table.sort(groups[key])
+        local shown = {}
+        for index = 1, math.min(6, #groups[key]) do shown[index] = groups[key][index] end
+        lines[#lines + 1] = "line " .. key .. " (" .. #groups[key] .. "): " .. table.concat(shown, ", ") .. (#groups[key] > 6 and ", ..." or "")
+    end
+    return lines
+end
 
 -- Returns { seen = recipes listed, saved = kept, removed = dropped, pending = outputs not cached yet, prof = the
 -- profession the window was taken for }, or nil and a reason ("api", "character"). An Engineering window feeds
@@ -479,7 +637,29 @@ function F.CacheRecipes()
     local store = profession and char[F.PROFESSIONS[profession].store] or char.recipes
     F.lastWindow = F.Table(window) and { id = window.professionID, parent = window.parentProfessionID,
         name = window.professionName, engineering = profession == "engineering", prof = profession or "cooking" } or nil
-    local result = { seen = 0, saved = 0, removed = 0, pending = 0, prof = profession or "cooking" }
+    local result = { seen = 0, saved = 0, removed = 0, pending = 0, rejected = 0, prof = profession or "cooking", changes = {},
+        lineCheck = F.Has(api, "GetTradeSkillLineForRecipe"), lines = {} }
+    -- The skill-line check is only trusted when it agrees with the window on most of the learned recipes it lists: if it would leave out more
+    -- than half of them, the window and the lines disagree about which profession this is, and nothing is left out (an Engineering tab with
+    -- only Blacksmithing recipes was the result of trusting it, human report 2026-11-25). What lines the recipes gave is kept for /dpp status.
+    local reliable = true
+    if profession and result.lineCheck then
+        local learned, outside = 0, 0
+        for _, id in ipairs(ids) do
+            local info = F.Integer(id, 1, 2147483647) and api.GetRecipeInfo(id) or nil
+            if F.Table(info) and info.learned == true then
+                learned = learned + 1
+                local line, parent = api.GetTradeSkillLineForRecipe(id)
+                local key = tostring(line) .. "/" .. tostring(parent)
+                local entry = result.lines[key]
+                if not entry then entry = { count = 0, sample = F.String(info.name) and info.name or tostring(id) }; result.lines[key] = entry end
+                entry.count = entry.count + 1
+                if not Belongs(api, id, window, profession) then outside = outside + 1 end
+            end
+        end
+        if learned > 0 and outside * 2 > learned then reliable = false end
+    end
+    result.lineReliable = reliable
     for _, id in ipairs(ids) do
         if F.Integer(id, 1, 2147483647) then
             result.seen = result.seen + 1
@@ -492,6 +672,13 @@ function F.CacheRecipes()
                         local item = F.ItemMeta(output)
                         if item.class == nil then
                             result.pending = result.pending + 1
+                        elseif profession and reliable and not Belongs(api, id, window, profession) then
+                            -- another profession's recipe that this window lists: not kept, and taken out if an earlier scan kept it
+                            result.rejected = result.rejected + 1
+                            if store[id] then
+                                store[id] = nil
+                                result.removed = result.removed + 1
+                            end
                         elseif profession then
                             -- Kept even when no vendor buys the result: it may be a material of another recipe the player can
                             -- make (blasting powder, a bolt of cloth); F.BuildRows leaves such a recipe out of the list.
@@ -499,8 +686,10 @@ function F.CacheRecipes()
                             if reagents then
                                 local qMin = F.Integer(schematic.quantityMin, 1, 100000) and schematic.quantityMin or 1
                                 local qMax = F.Integer(schematic.quantityMax, qMin, 100000) and schematic.quantityMax or qMin
+                                local before = store[id]
                                 store[id] = { name = F.String(info.name) and info.name or item.name,
                                     out = output, qMin = qMin, qMax = qMax, r = reagents }
+                                Remember(id, store[id], before, result)
                                 result.saved = result.saved + 1
                             elseif store[id] then
                                 store[id] = nil
@@ -511,8 +700,10 @@ function F.CacheRecipes()
                             local qMin = F.Integer(schematic.quantityMin, 1, 100000) and schematic.quantityMin or 1
                             local qMax = F.Integer(schematic.quantityMax, qMin, 100000) and schematic.quantityMax or qMin
                             if reagents then
+                                local before = char.recipes[id]
                                 char.recipes[id] = { name = F.String(info.name) and info.name or item.name,
                                     out = output, qMin = qMin, qMax = qMax, r = reagents }
+                                Remember(id, char.recipes[id], before, result)
                                 result.saved = result.saved + 1
                             end
                         end
@@ -522,6 +713,18 @@ function F.CacheRecipes()
                     result.removed = result.removed + 1
                 end
             end
+        end
+    end
+    -- What an earlier scan kept that is not this profession's (a Blacksmithing recipe saved from a window taken for Engineering): taken out,
+    -- whatever the window lists now, by the recipe's own profession.
+    if profession and reliable and result.lineCheck then
+        local gone = {}
+        for id in pairs(store) do
+            if not Belongs(api, id, window, profession) then gone[#gone + 1] = id end
+        end
+        for _, id in ipairs(gone) do
+            store[id] = nil
+            result.removed = result.removed + 1
         end
     end
     -- A window that listed cooked food is the Cooking window: remember its skill line so a click on a
@@ -673,7 +876,7 @@ function F.OnCraft(recipeID, numCasts)
     if not (F.Integer(recipeID, 1, 2147483647) and F.Integer(numCasts, 1, 1000000)) then return end
     F.crafts.seen = F.crafts.seen + 1
     F.crafts.last = { id = recipeID, casts = numCasts }
-    if numCasts < 2 or not F.db or F.db.craftTime == false then return end
+    if numCasts < 2 or not F.db then return end
     if F.skipTimeLine == recipeID then return end   -- the "+" button's own chat line has the time (Craft.lua)
     local each, source = F.CraftSeconds(recipeID)
     -- one line per recipe per 10 s, however often Create All is pressed
@@ -865,7 +1068,8 @@ local function BuildRowsOf(prof)
                 or (F.SellDE() and (F.Disenchant.ValueOf(recipe.out) or 1) > 0)) then   -- (a result nobody buys is only ever a material)
             local item = F.ItemMeta(recipe.out)
             if unknown and F.Integer(recipe.item, 1, 2147483647) then F.ItemMeta(recipe.item) end   -- (the recipe item's data is asked for now, so its bind type is there at the hover and kept for the next session)
-            if unknown and not F.IsFood(item) then return end   -- (a learned recipe is only kept for food; the catalog's wait for the item data)
+            -- (an unlearned recipe waits for the item data; Cooking's catalog also keeps food only, the others' lists every result a vendor or the AH buys, as for a learned one)
+            if unknown and (item.class == nil or (prof == "cooking" and not F.IsFood(item))) then return end
             local seconds, secondsFrom = F.CraftSeconds(id)
             -- Materials the player makes cheaper than they can buy them: costed by their own materials, and their
             -- casting time added to this recipe's.

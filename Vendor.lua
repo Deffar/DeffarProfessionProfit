@@ -100,10 +100,99 @@ local function BagReserve()
     return F.Integer(F.db and F.db.bagReserve, 0, 20) and F.db.bagReserve or 2
 end
 
+-- A material is a SUPPLY (something to top up to match the rest) when this vendor sells it or any vendor does (a vendor price has been saved
+-- for it); the others (auction house materials such as the clams or the meat) set how many crafts there are to buy supplies for. Otherwise Hot
+-- Spices bought at another vendor would block buying milk here just because none are held yet.
+local function SupplyTest(offers)
+    return function(ids)
+        for _, id in ipairs(ids or {}) do
+            if offers[id] or (type(F.db.vendorBuy) == "table" and type(F.db.vendorBuy[id]) == "table") then return true end
+        end
+        return false
+    end
+end
+
+-- Shift-click (human request, 2026-11-27): the "AH" plan. The normal plan (what the held materials allow), but only for the crafts that earn
+-- something when their result is sold at the auction house, and only ONE recipe per held material they compete for: Lean Venison takes 1 Stag Meat
+-- and 4 Mild Spices, Savory Stag Sliders 2 Stag Meat and 3 Hot Spice, so the same meat cannot be both and the one that earns most from the meat
+-- held is the one whose spice is bought. Recipes limited by different materials do not compete: each gets its spice.
+-- A craft counts when it is a learned recipe, uses something this vendor sells, the held materials allow at least one craft of it, and it earns
+-- above 0 per craft (the AH price less the auction house's cut, minus what the materials cost now). Among those limited by the same material the
+-- winner has the most total profit (crafts the held material allows x profit per craft; a tie: the higher profit per craft).
+-- Returns { [recipe id] = recipe }, how many there are and the best profit per craft among them. `notes`, when given, collects one line per recipe
+-- that uses this vendor saying why it is in or out (/dpp vendorah).
+-- A food nobody buys from a vendor has the evaluation status "nosell" in the default (vendor price) mode although its materials are all priced
+-- (Calc.Evaluate): it is kept here, because this plan values the result at the auction house whatever the Sell at AH box says (the human's
+-- Savory Stag Sliders were left out by an "ok"-only test).
+local function AHRecipes(offers, isSupply, notes)
+    local byLimit = {}   -- limiting material id -> the best candidate so far: { id, recipe, profit, total, crafts }
+    local ctx = F.CraftContext()
+    local function Note(text) if notes then notes[#notes + 1] = text end end
+    for _, row in ipairs(F.BuildRows(F.Tab()) or {}) do
+        local ev = row.ev
+        if not row.unknown and F.Table(ev) and F.Table(row.recipe) then
+            local flat, via = F.Flatten(row.recipe, ctx)
+            local reagents = #via > 0 and flat or row.recipe.r or {}
+            local uses, crafts, limiting = false, nil, nil
+            for _, reagent in ipairs(reagents) do
+                for _, id in ipairs(reagent.ids or {}) do if offers[id] then uses = true end end
+                if not isSupply(reagent.ids) then
+                    local made = math.floor(Held(reagent.ids or {}) / (tonumber(reagent.qty) or 1))
+                    if not crafts or made < crafts then crafts, limiting = made, (reagent.ids or {})[1] end   -- (the same limiting material V.Plan groups by)
+                end
+            end
+            if uses then
+                local name = row.name or "?"
+                if ev.complete ~= true or not F.Number(ev.cost) then
+                    Note(name .. ": a material has no price.")
+                elseif not F.Number(row.ahValue) then
+                    Note(name .. ": no AH price for the result.")
+                else
+                    -- what a craft sells for at the auction house: the yield, plus the chance of one more item (Master Chef), less the auction house's cut
+                    local yield = F.Number(ev.yield) and ev.yield > 0 and ev.yield or 1
+                    local chance = F.Number(ev.chance) and ev.chance or 0
+                    local profit = math.floor((row.ahValue + row.ahValue / yield * chance) * (1 - F.AH_CUT)) - ev.cost
+                    if profit <= 0 then
+                        Note(name .. ": earns " .. F.Money(profit) .. " per craft at the AH.")
+                    elseif not (crafts and crafts > 0 and limiting) then
+                        Note(name .. ": none of its materials in your bags.")
+                    else
+                        local total = crafts * profit
+                        local current = byLimit[limiting]
+                        if not current or total > current.total or (total == current.total and profit > current.profit) then
+                            if current then Note(current.name .. ": gives way to " .. name .. " for the same " .. (F.ItemMeta(limiting).name or "material") .. ".") end
+                            byLimit[limiting] = { id = row.id, recipe = row.recipe, profit = profit, total = total, crafts = crafts, name = name }
+                        else
+                            Note(name .. ": gives way to " .. current.name .. " for the same " .. (F.ItemMeta(limiting).name or "material") .. ".")
+                        end
+                    end
+                end
+            end
+        end
+    end
+    local pool, count, top = {}, 0, nil
+    for _, winner in pairs(byLimit) do
+        pool[winner.id] = winner.recipe
+        count = count + 1
+        if not top or winner.profit > top then top = winner.profit end
+        Note(winner.name .. ": bought for - " .. F.Money(winner.profit) .. " per craft, " .. winner.crafts .. " crafts.")
+    end
+    return pool, count, top
+end
+
+-- /dpp vendorah: why each recipe that uses this vendor's materials is in or out of the Shift plan.
+function V.AHReport()
+    local offers = V.Offers()
+    if not offers then return nil, "no vendor window or merchant API" end
+    local notes = {}
+    AHRecipes(offers, SupplyTest(offers), notes)
+    return notes
+end
+
 -- The shortfalls this vendor can fill: { rows = { { id, name, index, bundle, price, have, target, buy, cost,
 -- for = { recipe names } } }, cost = total copper, short = true when the gold held cut something }, or nil
 -- and why ("api", "nochar").
-function V.Plan()
+function V.Plan(ahMode)
     local offers = V.Offers()
     if not offers then return nil, "api" end
     local char = F.Char()
@@ -117,16 +206,13 @@ function V.Plan()
         local chosen = F.FindRecipe(selected)
         if chosen then pool = { [selected] = chosen } else selected = nil end
     end
-
-    -- A material is a SUPPLY (something to top up to match the rest) when this vendor sells it or any vendor does
-    -- (a vendor price has been saved for it); the others (auction house materials such as the clams or the meat)
-    -- set how many crafts there are to buy supplies for. Otherwise Hot Spices bought at another vendor would block
-    -- buying milk here just because none are held yet.
-    local function IsSupply(ids)
-        for _, id in ipairs(ids or {}) do
-            if offers[id] or (type(F.db.vendorBuy) == "table" and type(F.db.vendorBuy[id]) == "table") then return true end
-        end
-        return false
+    local IsSupply = SupplyTest(offers)
+    local best   -- (the AH plan) { count, profit }: how many crafts earn at the auction house, and the best of them per craft
+    if ahMode then
+        selected = nil
+        local count, top
+        pool, count, top = AHRecipes(offers, IsSupply)
+        best = count > 0 and { count = count, profit = top } or nil
     end
 
     -- need[vendorItemID][limitingMaterialID] = { need = items, recipe = name }: the larger need per limiting material
@@ -183,7 +269,7 @@ function V.Plan()
     table.sort(covered, function(a, b) return a.recipe < b.recipe end)
     table.sort(unsized, function(a, b) return a.recipe < b.recipe end)
     local plan = { rows = {}, cost = 0, selected = selected and pool[selected].name or nil, reserve = BagReserve(),
-        blocked = blocked, covered = covered, unsized = unsized, groups = {} }
+        blocked = blocked, covered = covered, unsized = unsized, groups = {}, ah = best, ahNone = ahMode and not best or nil }
     local slotsLeft = FreeSlots()          -- shared by every row: each new stack takes one
     if not slotsLeft then plan.bagUnknown = true end
     local ids = {}
@@ -433,7 +519,7 @@ local function Continue(run)
 end
 
 -- The "+" click: buys the whole plan shown in the tooltip. Returns true when a purchase was started.
-function V.Buy()
+function V.Buy(ahMode)
     if V.run then return false, "already buying" end
     if not V.open then return false, "no vendor window" end
     if type(InCombatLockdown) == "function" and InCombatLockdown() then
@@ -444,7 +530,7 @@ function V.Buy()
         F.Print("this client has no BuyMerchantItem: the + button cannot buy.")
         return false, "api"
     end
-    local plan, why = V.Plan()
+    local plan, why = V.Plan(ahMode)
     if not plan then F.Print("cannot read the vendor (" .. tostring(why) .. ").") return false, why end
     if plan.bagUnknown then
         F.Print("cannot read your bag space or a stack size, so nothing is bought (the + button keeps " .. plan.reserve .. " bag slots free).")
@@ -452,7 +538,8 @@ function V.Buy()
     end
     if #plan.rows == 0 then
         local why = V.WhyEmpty(plan)
-        F.Print(plan.bagShort and ("no room: your bags would have fewer than " .. plan.reserve .. " free slots left.")
+        F.Print(plan.ahNone and "nothing to buy here: no craft you hold materials for earns a profit sold at the auction house and uses this vendor's materials."
+            or plan.bagShort and ("no room: your bags would have fewer than " .. plan.reserve .. " free slots left.")
             or (plan.short and "nothing to buy: you cannot afford any of it.")
             or (why and ("nothing to buy here: " .. why .. "."))
             or "nothing to buy here: this vendor sells none of the materials your recipes use.")
@@ -472,6 +559,7 @@ end
 -- (V.WhyEmpty) is the longer one.
 local function IdleLines(plan)
     if not plan then return { "Cannot read this vendor." } end
+    if plan.ahNone then return { "No profitable AH craft here for what you hold." } end
     if plan.bagUnknown then return { "Cannot read your bag space." } end
     if plan.bagShort then return { "No bag space." } end
     if plan.short then return { "Cannot afford it." } end
@@ -482,11 +570,13 @@ end
 local function Tip(button)
     if type(GameTooltip) ~= "table" then return end
     local S = F.Style   -- the palette every Profession Profit tooltip uses (Style.lua), not colours of its own
-    local plan = V.Plan()
+    local ahMode = type(IsShiftKeyDown) == "function" and IsShiftKeyDown() == true   -- Shift held: the AH plan (BestAH)
+    local plan = V.Plan(ahMode)
     GameTooltip:SetOwner(button, "ANCHOR_CURSOR_RIGHT")
     GameTooltip:ClearLines()
     S.StartRules()
-    S.Title(GameTooltip, "Buy materials")
+    S.Title(GameTooltip, ahMode and "Buy materials (AH)" or "Buy materials")
+    if ahMode and plan and plan.ah then S.Line(GameTooltip, "AH crafts", tostring(plan.ah.count)) end
     if V.run then
         S.Reason(GameTooltip, "Buying...")
     elseif not plan or #plan.rows == 0 then
@@ -519,6 +609,10 @@ local function Tip(button)
         if plan.bagShort then S.Reason(GameTooltip, "Limited by bag space.") end
         if plan.bagUnknown then S.Reason(GameTooltip, "Cannot read bag space or stack size" .. (plan.unreadable and (": " .. plan.unreadable) or "") .. ".") end
     end
+    if not V.run and not ahMode then   -- (the hint is under a blank line, as the other hints are)
+        GameTooltip:AddLine(" ")
+        S.Hint(GameTooltip, "Shift-click: Buy materials (AH)")
+    end
     GameTooltip:Show()
     S.FitRules(GameTooltip)   -- (the lines are as wide as the tooltip the other lines made)
 end
@@ -537,8 +631,15 @@ function V.EnsureButton()
     button:SetPoint("BOTTOMLEFT", parent, "BOTTOMRIGHT", 4, 30)   -- outside the merchant window's right edge, near its bottom (the Create All "+" sits at the profession window's bottom right too)
     button.accent = F.UI.W.GOLD
     button.label:SetTextColor(F.UI.W.GOLD[1], F.UI.W.GOLD[2], F.UI.W.GOLD[3])
-    button:SetScript("OnClick", function() V.Buy() end)
+    button:SetScript("OnClick", function() V.Buy(type(IsShiftKeyDown) == "function" and IsShiftKeyDown() == true) end)
     button:HookScript("OnEnter", Tip)
+    -- Shift pressed or released over the button: its tooltip is redrawn (the AH plan shows while Shift is held)
+    if F.Has(button, "RegisterEvent") then
+        button:RegisterEvent("MODIFIER_STATE_CHANGED")
+        button:SetScript("OnEvent", function(self)
+            if self:IsShown() and type(GameTooltip) == "table" and F.Has(GameTooltip, "IsOwned") and GameTooltip:IsOwned(self) then Tip(self) end
+        end)
+    end
     button:HookScript("OnLeave", function() if type(GameTooltip) == "table" then GameTooltip:Hide() end end)
     button:Hide()
     V.button = button

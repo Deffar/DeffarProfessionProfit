@@ -3,7 +3,7 @@
 ## Notes: Shows which of your profession recipes earn the most gold per hour, with one-click buttons to buy materials and craft your best recipe (/dpp).
 ## Author: Deffar
 ## Category: Professions
-## Version: 0.46.0
+## Version: 0.47.0
 ## OptionalDeps: Auctionator, TradeSkillMaster
 ## IconTexture: Interface\AddOns\DeffarProfessionProfit\icon.tga
 ## SavedVariables: DeffarProfessionProfitDB
@@ -23,6 +23,8 @@ LuckUI.lua
 Vendor.lua
 Catalog.lua
 Waypoint.lua
+MaterialVendorData.lua
+MaterialVendors.lua
 Craft.lua
 Minimap.lua
 Core.lua

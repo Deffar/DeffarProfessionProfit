@@ -167,6 +167,7 @@ local function Setup(ev, opts)
     if not ev or ev.status ~= "ok" then return nil, "notok" end
     local z = C.NormalInverse(opts.odds) or 0
     local lines, fixed, auction = {}, 0, 0
+    local others = {}   -- the materials that are not bought at the auction house (a vendor's spices): their cost counts against the budget too
     for index, line in ipairs(ev.reagents) do
         if not line.free and line.unit then
             if opts.buy(line) then
@@ -174,6 +175,7 @@ local function Setup(ev, opts)
                 auction = auction + line.total
             else
                 fixed = fixed + line.total
+                others[#others + 1] = line
             end
         end
     end
@@ -205,6 +207,12 @@ local function Setup(ev, opts)
         for _, entry in ipairs(lines) do
             local need = math.max(0, math.ceil(n * entry.line.qty - 1e-9) - (opts.owned(entry.line.id) or 0))   -- whole units (a made material can need a fraction per craft)
             total = total + need * caps[entry.index]
+        end
+        -- what the other materials cost for `n` crafts, at today's price, less what is held: the budget is what the WHOLE run may cost, so the meat does
+        -- not leave nothing for the spices (human report 2026-11-27: it bought more meat than there was gold left to buy the vendor materials)
+        for _, line in ipairs(others) do
+            local need = math.max(0, math.ceil(n * line.qty - 1e-9) - (opts.owned(line.id) or 0))
+            total = total + need * line.unit
         end
         return total
     end

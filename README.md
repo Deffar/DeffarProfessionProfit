@@ -9,8 +9,9 @@ A World of Warcraft: Forever addon.
 - **Enchanting:** ranks disenchants by what they are worth against what the item costs at the auction house.
 - **Luck tracker:** compares your extra results (like Master Chef procs) with what you should expect, per session, character or lifetime.
 - **AH sales:** shows what your auctions really brought in, with deposits and the auction house cut included.
-- **Vendor + button:** buys the materials your recipes need from the vendor you are visiting, based on what you already hold.
-- **Create All + button:** on your profession window, starts Create All on the most profitable craft you can make from your bags.
+- **Vendor + button:** buys the materials your recipes need from the vendor you are visiting, based on what you already hold. Hold Shift to buy for the crafts that earn most at the auction house.
+- **Create All + button:** on your profession window, starts Create All on the most profitable craft you can make from your bags. When recipes share a material it lets you pick one.
+- **Nearest vendor:** hover a material to see the closest vendor that sells it; Ctrl-click pins it on the map.
 - **Known recipes:** untick the box on the Cooking tab to see every obtainable recipe, with where it comes from. Click one to see in chat who gives it; Ctrl-click to pin the vendor on the map.
 - **Minimap button:** left-click opens the window, right-click the luck window, drag to move it (`/dpp minimap on|off`).
 - **Auctionator shopping lists:** one click on a recipe builds a list with price limits that keep the craft profitable.

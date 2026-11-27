@@ -702,7 +702,7 @@ end
 -- A mouse-enabled square over a row's icon: the pointer on it shows the game's own item tooltip.
 -- `itemOf(row)` gives the item ID. The row's own tooltip is hidden when the pointer moves onto the icon (the row gets OnLeave) and
 -- comes back when it leaves it. Clicks go through to the row.
-local function MakeIconTip(row, itemOf)
+local function MakeIconTip(row, itemOf, vendor)
     local hit = CreateFrame("Frame", nil, row)
     hit:SetAllPoints(row.icon)
     hit:EnableMouse(true)
@@ -712,8 +712,26 @@ local function MakeIconTip(row, itemOf)
         if not (F.Integer(id, 1, 2147483647) and type(GameTooltip) == "table") then return end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         if F.Has(GameTooltip, "SetItemByID") then GameTooltip:SetItemByID(id) else GameTooltip:SetHyperlink("item:" .. id) end
+        if vendor then   -- (a material in the detail panel: the nearest vendor when one sells it, and what the clicks do)
+            if not F.MatVendors.AddTip(GameTooltip, id) then GameTooltip:AddLine(" ") end
+            GameTooltip:AddLine("Shift-click: Search it", 0.5, 0.8, 1)
+        end
         GameTooltip:Show()
     end)
+    if vendor then
+        -- the clicks on a material's icon or name in the detail panel: Ctrl pins the nearest vendor on the map (MaterialVendors.lua); Shift does what
+        -- a Shift-click on an item in a bag or in the chat does, the game's own way (F.LinkItem: the chat box when one is open, Auctionator's
+        -- shopping search when its window is up)
+        hit:SetScript("OnMouseUp", function(_, button)
+            local id = itemOf(row)
+            if button ~= "LeftButton" or not F.Integer(id, 1, 2147483647) then return end
+            if type(IsControlKeyDown) == "function" and IsControlKeyDown() == true then
+                F.MatVendors.Click(id)
+            elseif type(IsShiftKeyDown) == "function" and IsShiftKeyDown() == true then
+                F.LinkItem(id)
+            end
+        end)
+    end
     hit:SetScript("OnLeave", function() if type(GameTooltip) == "table" then GameTooltip:Hide() end end)
     KeepRowTipOff(row, hit)
     row.iconHit = hit
@@ -1017,6 +1035,19 @@ local function PaintDetail(d)
         else
             holder.itemID = nil
             holder:Hide()
+        end
+        local nameHolder = widgets.nameHolder
+        if cells and index <= shown then
+            nameHolder.itemID = cells.id
+            local hit = nameHolder.iconHit
+            hit:ClearAllPoints()
+            hit:SetPoint("TOPLEFT", widgets.name, "TOPLEFT", 0, 0)
+            local textWidth = F.Number(widgets.name:GetStringWidth()) and math.ceil(widgets.name:GetStringWidth()) or 80
+            hit:SetSize(math.max(10, textWidth), 14)
+            hit:Show()
+        else
+            nameHolder.itemID = nil
+            nameHolder.iconHit:Hide()
         end
         -- the colour bar, only for a material with an auction limit
         local gauge = widgets.gauge
@@ -2562,8 +2593,15 @@ local function Build()
         holder.icon = holder:CreateTexture(nil, "ARTWORK")
         holder.icon:SetAllPoints()
         holder:Hide()
-        MakeIconTip(holder, function(h) return h.itemID end)
+        MakeIconTip(holder, function(h) return h.itemID end, true)
         widgets.holder = holder
+        -- the material's name has the same item tooltip and Ctrl-click (pin the nearest vendor): a square over the text, sized to it when painted
+        local nameHolder = CreateFrame("Frame", nil, detail)
+        nameHolder:SetSize(1, 1)
+        nameHolder:SetPoint("TOPLEFT", detail, "TOPLEFT")
+        nameHolder.icon = widgets.name
+        MakeIconTip(nameHolder, function(h) return h.itemID end, true)
+        widgets.nameHolder = nameHolder
         -- the colour bar: a dark track, three zones, a thin line at the highest price, what lies past it dimmed, and a white bar
         -- (with a dark edge) at today's price; hovering it explains them (ShowGaugeTip)
         local gauge = CreateFrame("Frame", nil, detail)

@@ -575,6 +575,11 @@ SlashCmdList.DEFFARPROFESSIONPROFIT = function(message)
             .. ". Exit Scan button: " .. (F.Prices.TSMExitScanButton() and "found" or "not found") .. ".")
         for _, line in ipairs(F.Prices.TSMDescribeBoxes()) do F.Print(line) end
         F.Print("The last T press: " .. (F.tsmWhy and ("typing failed (" .. tostring(F.tsmWhy) .. "), the item was linked instead.") or "no failure recorded."))
+    elseif command == "vendorah" then   -- why each recipe that uses the open vendor's materials is in or out of the Shift plan of the + button
+        local notes, why = F.Vendor.AHReport()
+        if not notes then F.Print("vendor: " .. why .. ".")
+        elseif #notes == 0 then F.Print("vendor: no recipe of the tab in use uses this vendor's materials.")
+        else for _, line in ipairs(notes) do F.Print("vendor: " .. line) end end
     elseif command == "depth" then
         for _, line in ipairs(F.DepthReport()) do F.Print(line) end
     elseif command == "why" then

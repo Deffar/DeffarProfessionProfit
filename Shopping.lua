@@ -66,6 +66,12 @@ function F.ClearOldLists(keep)
     return deleted
 end
 
+-- Every [A] is a fresh scan: what the character already holds is NOT taken off what is bought (human, 2026-11-27: "you have 100 murloc eyes in
+-- inventory, buy X more" is not wanted; buy everything within the margin, odds and budget). The plan, the list quantities and the buy-depth check all
+-- count held units as 0; only what is bought AFTER the click is counted (`owned0` is the bag count at the click, `won` the purchases), so the quantity
+-- box still goes back to 0 when everything asked for has been bought.
+local function NoneHeld() return 0 end
+
 -- The numbers behind the button, also shown in its tooltip: crafts wanted, odds (percent), the budget in
 -- copper (nil when the purse cannot be read and none is set) and the character's gold.
 function F.ShoppingSettings()
@@ -94,7 +100,7 @@ function F.PlanShopping(row)
     local crafts, odds, budget, _, margin, fill = F.ShoppingSettings()
     local result = { crafts = crafts, odds = odds, budget = budget, margin = margin, fill = fill }
     result.opts = {
-        odds = odds / 100, crafts = crafts, budget = budget, margin = margin / 100, owned = F.Owned,
+        odds = odds / 100, crafts = crafts, budget = budget, margin = margin / 100, owned = NoneHeld,
         buy = function(line)
             local _, source = F.UnitCost(line.id)
             return source == "ah"
@@ -243,9 +249,10 @@ end
 local function CraftsOf(a, id)
     if not (a and a.seenHeld) then return nil end
     local now = F.Owned(id)
+    local bought = math.max(0, now - (a.owned0 or 0))   -- bought since the click: what was held before it counts for nothing
     local unitsLeft = math.max(0, (a.units or 0) - math.max(0, now - a.seenHeld))
-    local remainingNow = math.max(0, (a.need or 0) - math.max(0, now - (a.owned0 or 0)))
-    return math.floor((now + math.min(unitsLeft, remainingNow)) / (a.qty or 1))
+    local remainingNow = math.max(0, (a.need or 0) - bought)
+    return math.floor((bought + math.min(unitsLeft, remainingNow)) / (a.qty or 1))
 end
 
 local function EvaluateDepth(itemID)
@@ -263,7 +270,9 @@ local function EvaluateDepth(itemID)
         return
     end
     -- what is still to buy: the list's quantity less what has come into the bags since it was made
-    local gained = math.max(0, F.Owned(itemID) - (active.owned0 or 0))
+    -- (the bags lag behind a purchase: "You won an auction for x569" is said before the 569 are counted, so what the won notifications added up to
+    -- (`won`, Bought.lua OnPurchase) counts as well; whichever is larger; human report 2026-11-27: "169 of 569 under" right after buying the 569)
+    local gained = math.max(0, F.Owned(itemID) - (active.owned0 or 0), active.won or 0)
     local remaining = math.max(0, active.need - gained)
     -- The limit was worked out for the crafts the list asked for. If fewer units than that are listed under
     -- it, fewer crafts are bought and the odds need a lower price (less luck averaged out), so the limit is
@@ -277,9 +286,8 @@ local function EvaluateDepth(itemID)
         end
     end
     if active.ev and active.opts then
-        local held = F.Owned(itemID)
         for _ = 1, 25 do
-            local crafts = math.min(math.floor((held + math.min(depth.units, remaining)) / qty), others)
+            local crafts = math.min(math.floor((gained + math.min(depth.units, remaining)) / qty), others)
             local tighter = (F.Calc.PlanCaps(active.ev, active.opts, crafts) or {})[active.index] or 0
             if tighter >= cap then break end
             cap = tighter
@@ -295,13 +303,13 @@ local function EvaluateDepth(itemID)
     local target = math.min(depth.units, remaining)
     -- the crafts the units under the limit make; the list's fewest decides: a material that is plentiful is only bought for the crafts the scarcest
     -- one allows (2 Murloc Eye and 1 Tender Crab Meat a craft: 108 eyes make 54 crafts, so 54 crab meat, not hundreds)
-    local held = F.Owned(itemID)
-    local craftsHere = math.floor((held + math.min(depth.units, remaining)) / qty)
+    local held = F.Owned(itemID)   -- (kept for CraftsOf's "bought since" and /dpp depth; never counted toward what is wanted)
+    local craftsHere = math.floor((gained + math.min(depth.units, remaining)) / qty)
     local limitedBy
     if list then
         active.units, active.seenHeld = depth.units, held   -- (read by CraftsOf, for this material's turn as one of the others)
         if others < craftsHere then
-            local byLimit = math.max(0, others * qty - held)
+            local byLimit = math.max(0, others * qty - gained)
             if byLimit < target then
                 target = byLimit
                 for _, id in ipairs(list.order) do
@@ -329,6 +337,9 @@ local function EvaluateDepth(itemID)
         elseif depth.units == 0 and remaining > 0 and shown and shown ~= 0 then
             box:SetNumber(0)   -- nothing at or under the limit: the old quantity is no use (and is not left for a careless click); Auctionator's box takes a 0 (human, 2026-11-26)
             set = true
+        elseif remaining == 0 and shown and shown ~= 0 then
+            box:SetNumber(0)   -- everything asked for is bought: the box goes back to 0 as it does when nothing is under the limit (human, 2026-11-27)
+            set = true
         end
         if set and target >= 1 then EnforceQuantity(itemID, target, 3) end
     end
@@ -337,7 +348,7 @@ local function EvaluateDepth(itemID)
     -- (a drop of a copper or two is not worth saying)
     local lowered = (active.cap - cap) / active.cap >= 0.02 and (" (limit lowered to " .. limit .. ")") or ""
     if remaining == 0 then
-        F.Print(string.format("%s: already have the %d.", item, active.need))
+        F.Print(string.format("%s: already have the %d%s.", item, active.need, set and "; quantity set to 0" or ""))
     elseif depth.units == 0 then
         F.Print(string.format("%s: none at or under %s%s%s.", item, limit,
             depth.cheapest and (" (cheapest " .. F.Money(depth.cheapest) .. ")") or "", set and "; quantity set to 0" or ""))
@@ -356,7 +367,7 @@ local function EvaluateDepth(itemID)
         for _, id in ipairs(list.order) do
             local e = list.materials[id]
             if id ~= itemID and e then
-                local want = math.max(0, craftsHere * (e.qty or 1) - F.Owned(id))
+                local want = math.max(0, craftsHere * (e.qty or 1))
                 if want < e.need then parts[#parts + 1] = want .. " " .. F.ItemLink(id, e.name) end
             end
         end
@@ -432,7 +443,7 @@ function F.ShoppingMaterials(row)
     for index, line in ipairs(row.ev.reagents) do
         local id = line.id
         if id then
-            local need = math.ceil(line.qty * crafts - 1e-9) - F.Owned(id)
+            local need = math.ceil(line.qty * crafts - 1e-9)   -- (held units are not taken off: every search is a fresh scan)
             local _, source = F.UnitCost(id)
             if need > 0 and source ~= "vendor" then
                 list[#list + 1] = { id = id, name = F.ItemMeta(id).name, need = need, cap = F.MaterialCap(plan, index, id) }
@@ -549,19 +560,19 @@ function F.SendShoppingList(row)
     end
     local crafts = plan and plan.crafts or ctx.crafts
 
-    local terms, vendor, enough, unnamed, caps = {}, {}, {}, 0, {}
+    local terms, vendor, unnamed, caps = {}, {}, 0, {}
     -- what the auction house lets this list buy, shared by its materials (EvaluateDepth): crafts need ALL their materials, so the one with
     -- the fewest units under its limit decides how many of every other one is worth buying
     local listState = { crafts = {}, materials = {}, order = {}, planned = crafts }
     for index, line in ipairs(row.ev.reagents) do
         local id = line.id
         local name = id and F.ItemMeta(id).name or nil
-        local need = (id and (math.ceil(line.qty * crafts - 1e-9) - F.Owned(id))) or 0   -- whole units
+        local need = (id and math.ceil(line.qty * crafts - 1e-9)) or 0   -- whole units; what is held is not taken off (fresh scan)
         local _, source = F.UnitCost(id)
         if not id then
             unnamed = unnamed + 1
         elseif need <= 0 then
-            enough[#enough + 1] = F.ItemLink(id, name)
+            -- (a material the recipe does not use: nothing to buy)
         elseif not name then
             unnamed = unnamed + 1            -- the game has not loaded its name yet
         elseif source == "vendor" then
@@ -585,12 +596,7 @@ function F.SendShoppingList(row)
         elseif unnamed > 0 then
             F.Print("the game has not loaded the material names yet; try again in a moment.")
         else
-            -- Say which setting made the number: a fixed "Buy for" counts what is held toward it and stops there;
-            -- Max (fill the budget) only gets here when the budget itself is spent.
-            local fixed = F.Integer(F.db.buyCrafts, 1, 100000) and F.db.buyCrafts or nil
-            F.Print("nothing to buy: you already hold enough for " .. crafts .. " crafts of " .. craft
-                .. (fixed and (". \"Buy for\" is set to " .. fixed .. " crafts: tick Max in the window (or /dpp buy max) to keep buying within your limits.")
-                    or (ctx.fill and " (the most your budget buys within the price limits)." or ".")))
+            F.Print("nothing to buy for " .. craft .. ".")
         end
         return 0
     end
@@ -631,7 +637,6 @@ function F.SendShoppingList(row)
     F.Print(line)
     local left = {}
     if #vendor > 0 then left[#left + 1] = "vendor " .. table.concat(vendor, ", ") end
-    if #enough > 0 then left[#left + 1] = "held " .. table.concat(enough, ", ") end
     if unnamed > 0 then left[#left + 1] = unnamed .. " not loaded" end
     if #left > 0 then print("  Left out: " .. table.concat(left, "; ") .. ".") end
     return #terms

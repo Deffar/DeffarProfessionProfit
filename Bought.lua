@@ -263,6 +263,12 @@ function B.OnPurchase(item, quantity)
     if not id then return Skip("notamaterial") end
     B.pending[#B.pending + 1] = { time = GetTime(), id = id, quantity = quantity }
     Schedule(FLUSH_DELAY)
+    -- a list's material that was just bought: its depth is looked at again (the bags lag, so the units bought count as gained, Shopping.lua)
+    local active = F.activeCaps and F.activeCaps[id]
+    if active then
+        active.won = (active.won or 0) + quantity
+        if F.OnCommoditySearch then F.OnCommoditySearch(id) end
+    end
     return true
 end
 

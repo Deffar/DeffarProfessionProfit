@@ -2,7 +2,7 @@
 -- caches, the Master Chef rank read, and the list of rows the window shows. No frames (UI.lua) and
 -- no event registration (Core.lua). The arithmetic is in Calc.lua.
 local addonName, F = ...
-F.VERSION = "0.46.0"
+F.VERSION = "0.47.0"
 F.CALLER = addonName   -- Auctionator wants the calling addon's name as its first argument
 F.eventIssues = {}
 
@@ -306,6 +306,22 @@ end
 
 -- An item for a chat line: its real link (clickable, quality-coloured, hoverable) when the game has the item, else its name. Every chat line that
 -- names an item goes through this.
+-- A Shift-click on an item, handled as the game handles it on a bag item or a link in the chat: HandleModifiedItemClick(link) puts the link in the
+-- chat box when one is open and otherwise lets the addons that hook ChatEdit_InsertLink take it (the installed Auctionator searches its shopping
+-- window for the item's name, Source\Shopping\Hooks.lua; TSM does the same on Browse). Returns true when a call was made.
+function F.LinkItem(id)
+    local link = F.ItemLink(id)
+    if type(_G.HandleModifiedItemClick) == "function" then
+        _G.HandleModifiedItemClick(link)
+        return true
+    end
+    if type(_G.ChatEdit_InsertLink) == "function" then
+        _G.ChatEdit_InsertLink(link)
+        return true
+    end
+    return false
+end
+
 function F.ItemLink(id, name)
     if F.Integer(id, 1, MAX_INT) and F.Has(C_Item, "GetItemInfo") then
         local _, link = C_Item.GetItemInfo(id)

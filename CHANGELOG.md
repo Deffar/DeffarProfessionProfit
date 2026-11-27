@@ -2,15 +2,15 @@
 
 ## 0.47.0
 - **Nearest vendor for a material.** Hover a material's icon or name in a recipe's details: for a material a vendor sells (spices, milk, thread, stout skin and more) the tooltip names the nearest vendor with the distance, plus how many more there are. **Ctrl-click** the icon or the name to pin that vendor on the map. Vendors are filtered to your faction. The data holds 150 vendors for 69 materials, with every capital city covered (Stormwind, Ironforge, Darnassus, Orgrimmar, Undercity, Thunder Bluff).
-- **Shift-click a material** does the game's own item click, so it searches that item in Auctionator or TSM. Hovering a material's icon shows the item itself.
+- **Shift-click a material** to search for it in Auctionator or TSM. Hovering a material's icon shows the item itself.
 - **Vendor "+", hold Shift:** reads **Buy materials (AH)** and buys for the crafts that earn money at the auction house. It still buys for the meat in your bags, one recipe per shared meat (the one that earns most from it), as many as your bags and gold allow.
 - **Create All "+" asks which recipe when recipes compete.**
   - When two or more recipes that earn money share a material you hold, the "+" opens a list instead of picking one for you. A recipe that shares nothing is crafted first.
   - One click on a row starts the craft. Hovering a row gives it a gold border and dims the others; the row that earns most has a green border.
   - The prices shown are vendor prices; hold **Shift** for auction house prices. The columns line up on every row.
-  - If the game does not start the craft, the choice is kept and the next click on "+" crafts it. A click that starts nothing says why in one line.
+  - If a craft does not start, click "+" again and it crafts your choice.
 - **`[A]` and `[T]` start fresh every time.** What is already in your bags is no longer taken off: a list is sized by the margin, the confidence and the budget alone (holding 100 Murloc Eyes does not turn it into "buy X more"). What you buy after the click still counts, so the quantity box goes back to 0 once you have bought what the list asked for.
-- **`[A]` after a purchase:** the quantity goes back to 0 right after the buy (the win message counts at once, before the bags catch up), and the budget now also covers the vendor materials, so the meat no longer leaves nothing for the spices.
+- **Smoother buying with `[A]`:** the quantity goes back to 0 as soon as you have bought your amount, and your budget now keeps gold back for the vendor materials, so you are not left unable to afford the spices.
 
 ## 0.46.0
 - **TradeSkillMaster (TSM) support.** Prices come from TSM or Auctionator. With both loaded TSM is used first and Auctionator is the backup for an item TSM has no price for; a small **Prices: TSM / Auctionator** button in the footer (only shown with both) switches which is first. `/dpp prices auto|auctionator|tsm`, `/dpp tsmsource <TSM price source>` (default `DBMinBuyout`).

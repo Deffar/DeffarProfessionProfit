@@ -27,7 +27,7 @@ local DEFAULTS = { version = 1, sort = "profit", sortDesc = true,
     ownedFree = false, profitOnly = false, showAH = false, odds = 90, margin = 10 }
 local LUCK_SORT_KEYS = { item = true, c = true, x = true, exp = true, real = true, luck = true, spent = true,
     gained = true, profit = true, hour = true }   -- the /dpp luck column headings (LuckUI.lua)
-local SORT_KEYS = { name = true, mats = true, vendor = true, ah = true, profit = true, margin = true, odds = true, rank = true }
+local SORT_KEYS = { name = true, mats = true, vendor = true, ah = true, profit = true, margin = true, odds = true, rank = true, stat = true, hour = true, level = true }
 
 ---------------------------------------------------------------------------
 -- Saved settings
@@ -48,6 +48,8 @@ local function Initialize()
         saved.crafts, saved.craftTime = nil, nil   -- (two settings that are gone: /dpp crafts and /dpp crafttime)
         if type(saved.sort) ~= "string" or not SORT_KEYS[saved.sort] then saved.sort = DEFAULTS.sort end
         if type(saved.sortDesc) ~= "boolean" then saved.sortDesc = DEFAULTS.sortDesc end
+        if saved.sort2 ~= nil and not (type(saved.sort2) == "string" and SORT_KEYS[saved.sort2]) then saved.sort2 = nil end   -- the tie-break column under a stat sort
+        if type(saved.sort2Desc) ~= "boolean" then saved.sort2Desc = true end
         if type(saved.ownedFree) ~= "boolean" then saved.ownedFree = DEFAULTS.ownedFree end
         if type(saved.profitOnly) ~= "boolean" then saved.profitOnly = DEFAULTS.profitOnly end
         if type(saved.showAH) ~= "boolean" then saved.showAH = DEFAULTS.showAH end
@@ -377,10 +379,13 @@ local function Status()
         .. (live and (live .. "/" .. F.RANK_MAX) or ("failed - " .. (REASONS[reason] or tostring(reason)))) .. ".")
     local char, key = F.Char()
     F.Print("Character: " .. tostring(key) .. ", " .. (char and Count(char.recipes) or 0) .. " cooking and "
-        .. (char and Count(char.engineering) or 0) .. " engineering and " .. (char and Count(char.tailoring) or 0) .. " tailoring recipe(s) saved.")
-    local cookRank, engRank, tailRank = F.SkillRank(F.PROFESSIONS.cooking.line), F.SkillRank(F.PROFESSIONS.engineering.line), F.SkillRank(F.PROFESSIONS.tailoring.line)
-    F.Print("Skill ranks read: Cooking " .. tostring(cookRank) .. ", Engineering " .. tostring(engRank) .. ", Tailoring " .. tostring(tailRank)
-        .. " (nil: not readable). Tabs shown: "
+        .. (char and Count(char.engineering) or 0) .. " engineering, " .. (char and Count(char.tailoring) or 0) .. " tailoring and "
+        .. (char and Count(char.leatherworking) or 0) .. " leatherworking, " .. (char and Count(char.alchemy) or 0) .. " alchemy, "
+        .. (char and Count(char.blacksmithing) or 0) .. " blacksmithing, " .. (char and Count(char.firstaid) or 0) .. " first aid and "
+        .. (char and Count(char.mining) or 0) .. " mining recipe(s) saved.")
+    local ranks = {}
+    for _, tab in ipairs(F.TABS) do ranks[#ranks + 1] = F.PROFESSIONS[tab].name .. " " .. tostring(F.SkillRank(F.PROFESSIONS[tab].line)) end
+    F.Print("Skill ranks read: " .. table.concat(ranks, ", ") .. " (nil: not readable). Tabs shown: "
         .. table.concat(F.VisibleTabs(), ", ") .. ".")
     local last = F.crafts.last
     F.Print("Create All time: hook " .. (F.crafts.hooked and "installed" or "NOT installed (no C_TradeSkillUI.CraftRecipe)") .. ", "
@@ -462,15 +467,15 @@ local function Help()
     print("  /dpp why <item name or id> - why the Enchanting list does or does not hold an item (price age, gone mark, data, value, filters)")
     print("  /dpp margin 0-999 - the least profit on cost (percent) that [A]'s price limits leave (now " .. F.db.margin .. "%)")
     print("  /dpp budget <gold>|all - the most [A]'s lists may cost (now " .. (F.db.budget and (F.db.budget .. " gold") or "all your gold") .. ")")
-    print("  /dpp cooking | engineering | tailoring | enchanting - open the window on that profession's tab")
+    print("  /dpp cooking | engineering | tailoring | leatherworking | alchemy | blacksmithing | firstaid | mining | enchanting - open the window on that profession's tab")
     print("  /dpp luck - the luck counter: extra results seen against the Master Chef chance (/dpp luck reset clears this session)")
     print("  /dpp owned <item> - how many of an item each way of counting reports (bags, with the bank)")
-    print("  /dpp recipes [cooking|engineering|tailoring] - the saved recipes of a profession, grouped by the skill line the game gives each")
+    print("  /dpp recipes [cooking|engineering|tailoring|leatherworking|alchemy|blacksmithing|firstaid|mining] - the saved recipes of a profession, grouped by the skill line the game gives each")
     print("  /dpp status - what was read and saved")
     print("  /dpp minimap on|off - show or hide the minimap button (drag it to move it)")
     print("  /dpp sales - the luck window's AH sales tab: what your auctions really brought in, deposits included")
     print("  /dpp de - what the Enchanting tab found in Auctionator's data")
-    print("Open your Cooking (and Engineering, Tailoring) window once so the recipes are saved, and visit vendors so their prices are saved.")
+    print("Open your Cooking (and Engineering, Tailoring, Leatherworking, Alchemy, Blacksmithing, First Aid, Mining) window once so the recipes are saved, and visit vendors so their prices are saved.")
 end
 
 SLASH_DEFFARPROFESSIONPROFIT1 = "/dpp"
@@ -479,10 +484,10 @@ SlashCmdList.DEFFARPROFESSIONPROFIT = function(message)
     local command, argument = (message or ""):lower():match("^%s*(%S*)%s*(.-)%s*$")
     if command == "" or command == "toggle" or command == "show" then
         F.UI.Toggle()
-    elseif command == "cooking" or command == "engineering" or command == "tailoring" or command == "enchanting" or command == "tab" then
+    elseif F.PROFESSIONS[command] or command == "tab" then   -- (every profession's key is a command: cooking, engineering, ..., firstaid, mining, enchanting)
         local key = command == "tab" and argument or command
         if not F.PROFESSIONS[key] then
-            F.Print("usage: /dpp cooking, /dpp engineering, /dpp tailoring, /dpp enchanting (or /dpp tab cooking|engineering|tailoring|enchanting).")
+            F.Print("usage: /dpp <profession>, one of cooking, engineering, tailoring, leatherworking, alchemy, blacksmithing, firstaid, mining, enchanting (or /dpp tab <profession>).")
             return
         end
         if not F.UI.IsShown() then F.UI.Show() end
@@ -614,7 +619,7 @@ SlashCmdList.DEFFARPROFESSIONPROFIT = function(message)
             for _, line in ipairs(F.OwnedReport(id)) do F.Print(line) end
         end
     elseif command == "recipes" then
-        -- /dpp recipes [cooking|engineering|tailoring]: the saved recipes of a profession grouped by the skill line the game gives each (FOR-0208)
+        -- /dpp recipes [any profession with recipes]: the saved recipes of a profession grouped by the skill line the game gives each (FOR-0208)
         local prof = F.PROFESSIONS[argument] and not F.PROFESSIONS[argument].disenchant and argument or F.Tab()
         if F.PROFESSIONS[prof].disenchant then prof = "cooking" end
         for _, line in ipairs(F.RecipeLinesReport(prof)) do F.Print(line) end

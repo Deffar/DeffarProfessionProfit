@@ -47,6 +47,7 @@ local UNKNOWN_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
 -- Columns after the name, left to right. `sort` is the key a click on the heading sorts by.
 local COLS = {
     { key = "level",  head = "Level",     sort = "level" },     -- the Enchanting tab only: the item's level
+    { key = "stat",   head = "Stat",      sort = "stat" },      -- Cooking, when the Effect box names a stat: how much of it each food gives
     { key = "mats",   head = "Materials", sort = "mats" },
     { key = "vendor", head = "Vendor",    sort = "vendor" },
     { key = "ah",     head = "AH",        sort = "ah", optional = true },
@@ -344,6 +345,7 @@ end
 -- The heading of a column. In "Sell at AH" mode the sale column holds the price after the auction house's cut and the
 -- comparison column the vendor price.
 local function ColHead(col)
+    if col.key == "stat" then return F.Effects.Text(state.effect or "all") end   -- (the stat's name: Agility)
     if state.de then   -- the Enchanting tab: items to buy and disenchant
         if col.key == "mats" then return "AH price" end
         if col.key == "vendor" then return "Disenchant" end
@@ -379,6 +381,7 @@ local function SortKey(row, key)
     if key == "margin" then return ev.margin end
     if key == "odds" then return row.de and row.de.odds or nil end
     if key == "level" then return row.de and row.de.level or nil end
+    if key == "stat" then return row.statAmount end
     if key == "rank" then
         if ev.needRank == nil then return nil end
         return ev.needRank == -1 and 99 or ev.needRank
@@ -391,13 +394,30 @@ local function Arrange(list)
     local key, desc = db.sort or "profit", db.sortDesc ~= false
     if key == "rank" and not state.proc then key = "profit" end   -- the rank column only exists where there is a rank
     if (key == "odds" or key == "level") and not state.de then key = "profit" end
+    if key == "stat" and not state.effect then key = "profit" end   -- (no stat chosen: the column is not there)
     if key == "hour" and state.de then key = "profit" end        -- and nothing is crafted on the Enchanting tab
+    -- With a stat chosen and the list sorted by it, a Shift-click on another heading sorts the foods that tie on the stat (db.sort2)
+    local key2 = (key == "stat" and state.effect and db.sort2 and db.sort2 ~= "stat") and db.sort2 or nil
+    if key2 == "rank" and not state.proc then key2 = nil end
+    local desc2 = db.sort2Desc ~= false
+    local function Tie(a, b)
+        if key2 then
+            local u, v = SortKey(a, key2), SortKey(b, key2)
+            if u ~= v then
+                if u == nil then return false end
+                if v == nil then return true end
+                if desc2 then return u > v end
+                return u < v
+            end
+        end
+        return a.name < b.name
+    end
     table.sort(list, function(a, b)
         local x, y = SortKey(a, key), SortKey(b, key)
-        if x == nil and y == nil then return a.name < b.name end
+        if x == nil and y == nil then return Tie(a, b) end
         if x == nil then return false end      -- recipes without the figure sink to the bottom
         if y == nil then return true end
-        if x == y then return a.name < b.name end
+        if x == y then return Tie(a, b) end
         if desc then return x > y end
         return x < y
     end)
@@ -408,8 +428,13 @@ local function HeadingText(col)
     return ColHead(col)
 end
 
+local DIM_GOLD = {0.72, 0.60, 0.16}   -- the second sort's heading (a stat sorted first, ties broken by this column)
+
 local function HeadingColor(sortKey)
-    return (F.db and (F.db.sort or "profit") or "profit") == sortKey and GOLD or GREY
+    local db = F.db
+    if (db and (db.sort or "profit") or "profit") == sortKey then return GOLD end
+    if db and state.effect and db.sort == "stat" and db.sort2 == sortKey then return DIM_GOLD end
+    return GREY
 end
 
 local function Pages()
@@ -443,6 +468,10 @@ local function Cells(d, rank)
     if state.de or SellAH() or SellDE() then other = d.vendorValue else other = d.ahValue end
     cells.ah = other and { F.Money(other), TEXT } or { "-", GREY }
 
+    if state.effect then
+        local amount = d.statAmount
+        cells.stat = amount and { tostring(amount), GREEN } or { "-", GREY }
+    end
     if d.de then cells.level = d.de.level and { tostring(math.floor(d.de.level)), GREY } or { "-", GREY } end
     if d.de and d.de.odds then
         local odds = d.de.odds
@@ -516,7 +545,7 @@ local nameX = SIDE + 3 + ABTN + 4 + ICON + 3 + COUNT_MIN + 3   -- where the reci
 local function ActiveColumns()
     local list = {}
     for _, col in ipairs(COLS) do
-        if (not col.optional or (F.db and F.db.showAH == true and not state.de)) and (col.key ~= "rank" or state.proc) and (col.key ~= "odds" or state.de) and (col.key ~= "level" or state.de) and not (state.de and col.key == "hour") then list[#list + 1] = col end
+        if (not col.optional or (F.db and F.db.showAH == true and not state.de)) and (col.key ~= "rank" or state.proc) and (col.key ~= "odds" or state.de) and (col.key ~= "level" or state.de) and (col.key ~= "stat" or state.effect ~= nil) and not (state.de and col.key == "hour") then list[#list + 1] = col end
     end
     return list
 end
@@ -1271,6 +1300,9 @@ function TIPS.known()
     local St = F.Style
     return { "Known recipes", { "Ticked", "learned only" }, { "Unticked", "all, unlearned " .. St.Paint(St.RUSTCODE, "in red") } }
 end
+function TIPS.effect()
+    return { "Effect", { "Shows", "foods with that buff" }, { "Read", "from each food's tooltip" }, { "Shift-click", "a heading: sorts ties" } }
+end
 function TIPS.max()
     return { "Max", { "Buys", "as many as the budget allows" }, { "Untick", "to type a number" } }
 end
@@ -1426,7 +1458,8 @@ function U.Refresh()
         button.selected = key == tab
         PaintTab(button)
     end
-    frame.rankButton:SetShown(info.proc)
+    frame.rankButton:SetShown(info.proc and tab == "cooking")   -- (Cooking only: the other tabs have no Master Chef rank)
+    if F.RankUp then F.RankUp.Update(frame) end   -- the "?" beside the X: how to get this profession's next rank
     frame.refreshButton:SetShown(info.disenchant == true)
     frame.priceButton:SetShown(F.Prices.BothLoaded())
     frame.priceButton.label:SetText("Prices: " .. (F.Prices.Name() or "?"))
@@ -1444,6 +1477,9 @@ function U.Refresh()
         shown = data.list
         data.info = info
     end
+    local effectKey = F.Effects.CanFilter(tab) and F.Effects.Valid(db.foodEffect) or nil   -- (only Cooking has the dropdown)
+    state.effect = effectKey and F.Effects.HasStat(effectKey) and effectKey or nil   -- (a stat: the Stat column shows its number)
+    local effectWaiting = 0
     local why = { loss = 0, ret = 0, profit = 0, odds = 0, old = 0 }   -- how many each Enchanting filter hid (an item can fail several)
     for _, row in ipairs(reuse and {} or list) do
         local keep
@@ -1472,6 +1508,12 @@ function U.Refresh()
             end
         else
             keep = not db.profitOnly or (row.ev.profit and row.ev.profit > 0)
+            if keep and effectKey then   -- Cooking's Effect dropdown: foods whose tooltip gives that buff (nil = the tooltip is not loaded yet: not shown until it is)
+                local has = F.Effects.Has(row.recipe and row.recipe.out, effectKey)
+                if has == nil then effectWaiting = effectWaiting + 1 end
+                keep = has == true
+                row.statAmount = keep and state.effect and F.Effects.Amount(row.recipe.out, state.effect) or nil
+            end
         end
         -- the search box: the recipe's or the item's name contains what was typed
         if keep and state.search ~= "" then
@@ -1538,10 +1580,12 @@ function U.Refresh()
     frame.known.mark:SetShown(db.showUnlearned ~= true)
     frame.marginLabel:SetText(state.de and "Min return:" or "Min margin:")
     frame.qualityButton.label:SetText(QualityText(state.deQuality))
+    frame.effectButton.label:SetText(F.Effects.Text(F.Effects.Valid(db.foodEffect) or "all"))
     frame.levelButton.label:SetText(state.deRange and ("Level " .. state.deRange) or "All levels")
     U.PlaceBar(spec)
     frame.budgetHint:SetShown(frame.ctl.budget.shown and db.budget == nil)
     if not state.de then frame.qualityButton.popup:Hide(); frame.levelButton.popup:Hide() end
+    if not F.Effects.CanFilter(tab) then frame.effectButton.popup:Hide() end
     local minProfit = (F.Number(db.minProfitCopper) and db.minProfitCopper >= 0) and db.minProfitCopper or 100
     if not frame.minBox.focused then frame.minBox:SetText(tostring(math.floor(minProfit / 100))) end
     if not frame.minCopperBox.focused then frame.minCopperBox:SetText(tostring(minProfit % 100)) end
@@ -1586,6 +1630,10 @@ function U.Refresh()
                 or "Needs Auctionator with a scan of the auction house.")
         elseif info.building then
             frame.empty:SetText(string.format("Building the list... %d%%", math.floor((F.Number(info.progress) and info.progress or 0) * 100 + 0.5)))
+        elseif effectKey and #list > 0 then
+            frame.empty:SetText(not F.Effects.Available() and "This client gives no food tooltips to read, so the Effect box cannot sort foods. Pick \"All\"."
+                or effectWaiting > 0 and ("Reading " .. effectWaiting .. " food tooltips... open the window again in a moment.")
+                or ("No food gives \"" .. F.Effects.Text(effectKey) .. "\". Pick \"All\" in the Effect box to see the rest."))
         elseif state.search ~= "" and #list > 0 then
             frame.empty:SetText("Nothing in the list matches \"" .. frame.searchBox:GetText() .. "\". Clear the search box to see the rest.")
         elseif info.disenchant and info.count == 0 then
@@ -1678,17 +1726,20 @@ function ShowTip(row, refresh)
         ShowLines(row, tip, refresh)
         return
     end
-    if d.unknown then   -- not learned: the same coloured pieces as the chat line says (Catalog.lua)
-        tip:AddLine(F.Catalog.Status(d.recipe, F.Tab()))
-        local source = F.Catalog.SourceLine(d.recipe)
-        if source then tip:AddLine(source) end
-        if F.String(d.recipe.when) then St.Note(tip, d.recipe.when) end   -- (a season or a release that is not out yet: Catalog.lua `when`)
+    if d.unknown then   -- not learned: the same coloured pieces as the chat line says (Catalog.lua); the order is title, binding, skill, source
         local bind = F.Catalog.Bind(d.recipe)   -- BoP or BoE, so a drop is not a surprise
         if bind then   -- earthy green: Binds on Equip (can be bought from a player), earthy red: Binds on Pickup (the hard one); other: grey
             local code = (bind == "Binds on Equip" and St.MOSSCODE) or (bind == "Binds on Pickup" and St.RUSTCODE) or St.GREYTEXT
             tip:AddLine(St.Paint(code, bind), 1, 1, 1)
         end
+        tip:AddLine(F.Catalog.Status(d.recipe, F.Tab()))
+        local source = F.Catalog.SourceLine(d.recipe)
+        if source then tip:AddLine(source) end
+        local zone = F.Catalog.ZoneLine(d.recipe, F.Tab())   -- where: the vendor's, quest giver's or nearest trainer's zone, or the creature's (Catalog.lua)
+        if zone then tip:AddLine(zone) end
+        if F.String(d.recipe.when) then St.Note(tip, d.recipe.when) end   -- (a season or a release that is not out yet: Catalog.lua `when`)
     end
+    if d.blueprint then St.Note(tip, "A blueprint: it builds a crafting station, which is not sold.") end
     -- What the recipe makes is its name; only a yield other than 1 (two per craft, or the extra-result chance on top) is worth a line.
     if F.Number(ev.yield) and math.abs(ev.yield - 1) > 1e-9 then
         St.Line(tip, "Makes", St.Count(ev.yield == math.floor(ev.yield) and tostring(ev.yield) or string.format("%.1f", ev.yield)))
@@ -1715,8 +1766,8 @@ function ShowTip(row, refresh)
     -- what the clicks do, one short line each, set apart from the facts above by an empty line
     tip:AddLine(" ")
     if d.unknown then
-        local _, vendor = F.Catalog.Vendor(d.recipe)
-        if vendor and vendor.map then tip:AddLine("Ctrl-click: Pin the vendor", 0.5, 0.8, 1) end
+        local hint = F.Catalog.PinHint(d.recipe, F.Tab())   -- ("Ctrl-click: Pin the vendor" / "...the quest giver" / "...the nearest trainer", only when there is a spot on the map)
+        if hint then tip:AddLine(hint, 0.5, 0.8, 1) end
     else
         tip:AddLine("Click: Open recipe", 0.5, 0.8, 1)
     end
@@ -1824,6 +1875,20 @@ end
 
 local function SortBy(key)
     local db = F.db
+    local shift = type(IsShiftKeyDown) == "function" and IsShiftKeyDown() == true
+    if shift and state.effect and db.sort == "stat" and key ~= "stat" then
+        -- a stat is chosen and sorts the list: Shift-click makes this column the tie-break inside each stat value (again: the other way round)
+        if db.sort2 == key then
+            db.sort2Desc = not (db.sort2Desc ~= false)
+        else
+            db.sort2 = key
+            db.sort2Desc = not (key == "name" or key == "mats" or key == "rank")
+        end
+        state.page = 1
+        U.Refresh()
+        return
+    end
+    if key ~= "stat" then db.sort2 = nil end   -- (a plain click on another column sorts by it alone)
     if (db.sort or "profit") == key then
         db.sortDesc = not (db.sortDesc ~= false)
     else
@@ -1967,6 +2032,23 @@ local function BuildDropdowns()
         U.Refresh()
     end, TIPS.level)
     frame.deOnly = { frame.qualityLabel, frame.qualityButton, frame.levelLabel, frame.levelButton }
+    -- Cooking's Effect dropdown, on the View row right of Known recipes (placed by the toolbar like any control): the foods that give that buff
+    frame.effectLabel = Text(frame, nil, GREY)
+    frame.effectLabel:SetText("Effect:")
+    frame.effectButton = MakeDropdown(0, 92, function()
+        local list = {}
+        for _, entry in ipairs(F.Effects.CATEGORIES) do list[#list + 1] = { value = entry.key, text = entry.text } end
+        return list
+    end, function(value)
+        F.db.foodEffect = F.Effects.Valid(value)
+        if F.Effects.HasStat(F.db.foodEffect) then   -- a stat: the best food first (the column heading sorts either way)
+            F.db.sort, F.db.sortDesc = "stat", true
+        elseif F.db.sort == "stat" then
+            F.db.sort, F.db.sortDesc = "profit", true
+        end
+        state.page = 1
+        U.Refresh()
+    end, TIPS.effect)
 end
 
 ---------------------------------------------------------------------------
@@ -1976,6 +2058,7 @@ end
 ---------------------------------------------------------------------------
 
 local CAPTION_W, BAR_GAP = 58, 12
+U.SEARCH_W = 170   -- (a field, not a local: Build is at Lua's limit of 60 upvalues)
 local SLOT_W = 124   -- the checkboxes sit in fixed columns of this width, the same on every row, so they line up and never move when a label or a neighbour changes
 
 function U.BarSpec(tab)
@@ -1987,8 +2070,8 @@ function U.BarSpec(tab)
         }
     end
     return {
-        { cap = "View", left = { "profitOnly", "known" }, right = { "search" } },
-        { cap = "Value", left = { "ownedFree", "showAH", "sellAH", "sellDE" }, right = { "rank" } },
+        { cap = "View", left = { "profitOnly", "known", "effect" }, right = { "search" } },
+        { cap = "Value", left = { "ownedFree", "showAH", "sellAH", "sellDE" } },
         { cap = "Shopping", left = { "budget", "odds", "margin", "buy", "max" } },
     }
 end
@@ -2066,12 +2149,12 @@ local function BuildBar(p)
         return (F.PROFESSIONS[F.Tab()] or {}).gear == true and F.ProfessionKnown("enchanting")   -- (only a character with Enchanting can disenchant, and only gear)
     end })
     CheckControl("max", frame.maxCheck)
-    MakeControl("rank", { { w = frame.rankButton } }, { side = "right", show = function() return state.proc end })
     MakeControl("search", { { w = frame.searchLabel, text = true }, { w = frame.searchBox, gap = 6 } }, { side = "right" })
     MakeControl("budget", Field(p.budgetLabel, frame.budgetBox, { w = p.coin }))
     MakeControl("odds", Field(p.oddsLabel, frame.oddsBox, { w = p.oddsPercent, text = true }))
     MakeControl("margin", Field(frame.marginLabel, frame.marginBox, { w = p.marginPercent, text = true }))
     MakeControl("buy", Field(p.buyLabel, frame.buyBox))
+    MakeControl("effect", Field(frame.effectLabel, frame.effectButton), { show = function() return F.Effects.CanFilter(F.Tab()) end })
     MakeControl("quality", Field(frame.qualityLabel, frame.qualityButton))
     MakeControl("level", Field(frame.levelLabel, frame.levelButton))
     MakeControl("minProfit", { { w = frame.minLabel, text = true }, { w = frame.minBox, gap = 4 }, { w = frame.minCoin, gap = 3 },
@@ -2126,6 +2209,15 @@ function U.PlaceBar(spec)
         end
     end
     for index = #spec + 1, #frame.captions do frame.captions[index]:Hide() end
+    -- The Search box is as wide as it takes for its label to start where the Buy for label starts two rows down (never wider than 170 or narrower
+    -- than 60); a tab with no Buy for row keeps 170.
+    local width = U.SEARCH_W
+    if active.search and active.buy and F.Number(frame.ctl.buy.root.barX) then
+        local label = frame.searchLabel:GetStringWidth()
+        local room = frame:GetWidth() - SIDE - frame.ctl.buy.root.barX - (F.Number(label) and label or 0) - 6
+        if F.Number(room) then width = math.max(60, math.min(U.SEARCH_W, math.floor(room))) end
+    end
+    frame.searchBox:SetWidth(width)
     for name, ctl in pairs(frame.ctl) do ctl.Show(active[name] == true) end
 end
 
@@ -2149,7 +2241,7 @@ local function Build()
 
     local handle = CreateFrame("Frame", nil, frame)
     handle:SetPoint("TOPLEFT", 34, 0)   -- (starts right of the Luck button: a handle over it would take its clicks)
-    handle:SetPoint("TOPRIGHT", -34, 0)
+    handle:SetPoint("TOPRIGHT", -58, 0)   -- (left of the "?" and the X)
     handle:SetHeight(HANDLE_H)
     frame.handle = handle
     handle:EnableMouse(true)
@@ -2176,12 +2268,15 @@ local function Build()
     local close = MakeButton(frame, "X", 22, 18)
     close:SetPoint("TOPRIGHT", -8, -6)
     close:SetScript("OnClick", function() frame:Hide() end)
+    -- the golden "?" left of the X (RankUp.lua; it comes through U.W because Build is at Lua's limit of upvalues)
+    if F.RankUp then F.RankUp.Attach(frame, U.W.MakeButton, U.W.NewTip, U.W.ShowLines) end
 
     frame.tabs = MakeTabStrip(frame, function(key) U.SelectTab(key) end)
 
-    -- Cooking's Rank button: the right end of the checkbox row. No line of text says the rank: its tooltip does.
+    -- Cooking's Rank button: the right end of the tab row (Refresh shows it on the Cooking tab only). No line of text says the rank: its tooltip does.
     frame.rankButton = MakeButton(frame, "Rank: Auto", 104, 20)
-        frame.rankButton:SetScript("OnClick", CycleRank)
+    frame.rankButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -SIDE, -(U.TAB_Y + 2))   -- (the tab row is 24 high, the button 20; U.TAB_Y: Build is at Lua's limit of 60 upvalues)
+    frame.rankButton:SetScript("OnClick", CycleRank)
     frame.rankButton:HookScript("OnEnter", function(self) U.ShowTip(self, U.TIPS.rank) end)
     frame.rankButton:HookScript("OnLeave", function() if type(GameTooltip) == "table" then GameTooltip:Hide() end end)
 
@@ -2368,7 +2463,7 @@ local function Build()
         U.Refresh()
     end
     local search = CreateFrame("EditBox", nil, frame)
-    search:SetSize(170, 18)
+    search:SetSize(U.SEARCH_W, 18)
     search:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -SIDE, -BUY_Y)
     search.fill, search.edges = Box(search, {0.06, 0.06, 0.07}, {0.34, 0.34, 0.37})
     search:SetFontObject("GameFontHighlightSmall")
@@ -2744,6 +2839,17 @@ U.TAB_Y, U.HANDLE_H = TAB_Y, HANDLE_H   -- (tests: the tab row must lie below th
 function U.NaturalWidth() return state.natural or MIN_WIDTH end
 function U.NaturalHeight() return state.contentH or 0 end
 function U.Frame() return frame end
+
+-- A column heading's button (the tests click it).
+function U.Heading(key) return headings[key] end
+
+-- Whether the column `key` is in the list now (the tests).
+function U.ColumnShown(key)
+    for _, col in ipairs(ActiveColumns()) do
+        if col.key == key then return true end
+    end
+    return false
+end
 function U.Row(index) return rows[index] end   -- (tests)
 function U.IsShown() return frame ~= nil and frame:IsShown() end
 function U.Hide() if frame then frame:Hide() end end
@@ -2807,7 +2913,7 @@ function U.Visible()
         if row and row:IsShown() and row.data then
             out[#out + 1] = { name = row.name:GetText(), count = row.count:GetText(), mats = row.cell.mats:GetText(), vendor = row.cell.vendor:GetText(),
                 profit = row.cell.profit:GetText(), hour = row.cell.hour:GetText(),
-                margin = row.cell.margin:GetText(), rank = row.cell.rank:GetText(), odds = row.cell.odds:GetText(), level = row.cell.level:GetText() }
+                margin = row.cell.margin:GetText(), rank = row.cell.rank:GetText(), odds = row.cell.odds:GetText(), level = row.cell.level:GetText(), stat = row.cell.stat:GetText() }
         end
     end
     return out

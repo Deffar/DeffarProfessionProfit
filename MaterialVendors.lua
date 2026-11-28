@@ -12,13 +12,15 @@ F.MatVendors = M
 
 local worldCache = {}   -- npc id -> { continent, x, y } on the continent grid, or false when the client cannot say (a vendor never moves)
 
--- x, y are 0-1 on the map `map`. Returns continent, x, y in yards, or nil.
+-- x, y are 0-1 on the map `map`. Returns continent, x, y in yards, or nil. (RankUp.lua measures its trainers the same way.)
 local function WorldPos(map, x, y)
     if not (F.Has(_G.C_Map, "GetWorldPosFromMapPos") and type(_G.CreateVector2D) == "function") then return nil end
     local continent, pos = _G.C_Map.GetWorldPosFromMapPos(map, _G.CreateVector2D(x, y))
     if continent == nil or not (F.Table(pos) and F.Number(pos.x) and F.Number(pos.y)) then return nil end
     return continent, pos.x, pos.y
 end
+
+M.WorldPos = WorldPos
 
 local function VendorWorld(id, npc)
     local cached = worldCache[id]

@@ -2,7 +2,7 @@
 -- caches, the Master Chef rank read, and the list of rows the window shows. No frames (UI.lua) and
 -- no event registration (Core.lua). The arithmetic is in Calc.lua.
 local addonName, F = ...
-F.VERSION = "0.47.0"
+F.VERSION = "0.48.0"
 F.CALLER = addonName   -- Auctionator wants the calling addon's name as its first argument
 F.eventIssues = {}
 
@@ -127,9 +127,11 @@ end
 -- `proc` is whether the profession has a chance of an extra result (only Cooking's Master Chef does). `line` is the skill line:
 -- Cooking 185 is Wowhead Forever's (FOR-0177); Engineering 202 is the classic skill line and a HYPOTHESIS here until
 -- the window reports it (FOR-0189): the open window is also recognised by its profession name.
-F.TABS = { "cooking", "engineering", "tailoring" }          -- the professions with saved recipes (their luck, their stores)
-F.LUCK_TABS = { "cooking", "engineering", "tailoring", "enchanting", "auction" }   -- the luck window's tabs: Enchanting counts disenchants (Luck.lua)
-F.TAB_ORDER = { "cooking", "engineering", "tailoring", "enchanting" }   -- the main window's tabs: Enchanting is a buy list of auction-house gear (Disenchant.lua)
+F.TABS = { "cooking", "engineering", "tailoring", "leatherworking", "alchemy", "blacksmithing", "firstaid", "mining" }          -- the professions with saved recipes (their luck, their stores)
+F.LUCK_TABS = { "cooking", "engineering", "tailoring", "leatherworking", "alchemy", "blacksmithing", "firstaid", "mining", "enchanting", "auction" }   -- the luck window's tabs: Enchanting counts disenchants (Luck.lua)
+-- The main window's tabs: Enchanting is a buy list of auction-house gear (Disenchant.lua). This is only the order the tabs are made in and the
+-- order of last resort: the tabs shown are put in the character's own order by F.VisibleTabs (Cooking, its two main professions, First Aid, Fishing).
+F.TAB_ORDER = { "cooking", "engineering", "tailoring", "leatherworking", "alchemy", "blacksmithing", "mining", "firstaid", "enchanting" }
 F.PROFESSIONS = {
     cooking = { key = "cooking", name = "Cooking", store = "recipes", proc = true, line = 185 },
     engineering = { key = "engineering", name = "Engineering", store = "engineering", proc = false, line = 202, gear = true },
@@ -137,6 +139,17 @@ F.PROFESSIONS = {
     -- result. 197 is the classic Tailoring skill line, the same family as Cooking 185 and Engineering 202: a HYPOTHESIS until the
     -- window reports it (FOR-0196); the open window is also recognised by its profession name.
     tailoring = { key = "tailoring", name = "Tailoring", store = "tailoring", proc = false, line = 197, gear = true },
+    -- Leatherworking works like Tailoring: the learned recipes whose result a vendor buys. 165 is the skill line Wowhead Forever gives its rank spells
+    -- (Leatherworking 3104 / 3811 / 10662: `skill` 165, read 2026-11-27); the open window is also recognised by its profession name.
+    leatherworking = { key = "leatherworking", name = "Leatherworking", store = "leatherworking", proc = false, line = 165, gear = true },
+    -- Alchemy, Blacksmithing, First Aid and Mining work like Leatherworking: the learned recipes whose result a vendor buys (or the auction house pays for). The
+    -- skill lines are the classic numbers (Alchemy 171, Blacksmithing 164, First Aid 129, Mining 186): HYPOTHESES until each window reports its own
+    -- (Leatherworking's 165 was confirmed in game, FOR-0216); the open window is also recognised by its profession name. Only Blacksmithing makes gear
+    -- (the Disenchant box). First Aid is one of the two "secondary" professions that go after the main ones in the tab row (F.VisibleTabs).
+    alchemy = { key = "alchemy", name = "Alchemy", store = "alchemy", proc = false, line = 171 },
+    blacksmithing = { key = "blacksmithing", name = "Blacksmithing", store = "blacksmithing", proc = false, line = 164, gear = true },
+    firstaid = { key = "firstaid", name = "First Aid", store = "firstaid", proc = false, line = 129 },
+    mining = { key = "mining", name = "Mining", store = "mining", proc = false, line = 186 },
     -- no recipes and no store: its rows are items from Auctionator's last scan. 333 is the classic Enchanting skill line,
     -- the same family as the verified Cooking 185 and Lockpicking 633 (FOR-0177, FOR-0151); not read on Forever yet.
     enchanting = { key = "enchanting", name = "Enchanting", proc = false, line = 333, disenchant = true },
@@ -182,15 +195,53 @@ function F.ProfessionKnown(key)
     return rank > 0
 end
 
+-- The character's two main professions in the order the game lists them (its first and second profession slot): { [skill line] = 1 or 2 }.
+-- GetProfessions() answers the slots of the skill list (prof1, prof2, archaeology, fishing, cooking, first aid) and GetProfessionInfo(slot) the skill
+-- line (its 7th value). That Forever has both is a HYPOTHESIS (plans/api-facts.md FOR-0216); without them the answer is empty and the tabs keep
+-- F.TAB_ORDER.
+function F.ProfessionSlots()
+    local slots = {}
+    if type(_G.GetProfessions) ~= "function" or type(_G.GetProfessionInfo) ~= "function" then return slots end
+    local first, second = _G.GetProfessions()
+    for slot, index in ipairs({ first or false, second or false }) do
+        if index then
+            local _, _, _, _, _, _, line = _G.GetProfessionInfo(index)
+            if F.Integer(line, 1, 2147483647) then slots[line] = slot end
+        end
+    end
+    return slots
+end
+
+-- Where a tab goes in the tab row (the human's order, 2026-11-27): Cooking first, then the main professions in the character's slot order, then First
+-- Aid, then Fishing; a tab that is none of those (the luck window's AH sales) last. The main professions the slots do not name keep F.TAB_ORDER.
+local SECONDARY = { cooking = 0, firstaid = 3, fishing = 4 }
+local function TabGroup(key, slots)
+    if SECONDARY[key] then return SECONDARY[key], 0 end
+    local def = F.PROFESSIONS[key]
+    if not def then return 5, 0 end
+    local slot = slots[def.line]
+    if slot then return 1, slot end
+    return 2, 0
+end
+
 -- The tabs to show, in order: the learned professions plus any `also(key)` says to keep (the luck window keeps a
--- profession that has counts). Never empty: Cooking stands in when nothing else qualifies.
+-- profession that has counts), put in the order above. Never empty: Cooking stands in when nothing else qualifies.
 function F.VisibleTabs(also, order)
     local list = {}
     for _, key in ipairs(order or F.TAB_ORDER) do
-        if F.ProfessionKnown(key) or (also and also(key)) then list[#list + 1] = key end
+        if F.ProfessionKnown(key) or (also and also(key)) then list[#list + 1] = { key = key, at = #list + 1 } end
     end
-    if #list == 0 then list[1] = "cooking" end
-    return list
+    local slots = F.ProfessionSlots()
+    for _, entry in ipairs(list) do entry.group, entry.slot = TabGroup(entry.key, slots) end
+    table.sort(list, function(a, b)
+        if a.group ~= b.group then return a.group < b.group end
+        if a.slot ~= b.slot then return a.slot < b.slot end
+        return a.at < b.at
+    end)
+    local keys = {}
+    for index, entry in ipairs(list) do keys[index] = entry.key end
+    if #keys == 0 then keys[1] = "cooking" end
+    return keys
 end
 
 function F.IsVisibleTab(list, key)
@@ -798,7 +849,7 @@ end
 --             character the first time the recipe is cooked (a recipe's ID is its spell ID: the Basic
 --             Campfire recipe 1229737 is Wowhead Forever's spell 1229737, FOR-0177);
 --   game:     C_Spell.GetSpellInfo(recipeID).castTime in milliseconds, when the client returns one
---             (unverified on Forever until FOR-0177's probe is answered);
+--             (returned on Forever for a Cooking, an Engineering and a Tailoring recipe; the last two are 5125 ms, not 3 s: FOR-0177);
 --   default:  3 seconds. Every one of 53 cooking recipe spells read on Wowhead Forever is a "3 sec
 --             cast" (the Basic Campfire, not food, is 10 sec): COMMUNITY-REPORTED, FOR-0177.
 ---------------------------------------------------------------------------
@@ -1082,13 +1133,14 @@ local function BuildRowsOf(prof)
     -- One row for a recipe: a learned one (the character's saved recipes), or with `unknown` one of the profession's catalog
     -- (Catalog.lua) that the character has not learned, listed when "Known recipes" is unticked.
     local function Add(id, recipe, unknown)
+        local blueprint = type(recipe) == "table" and (recipe.blueprint == true or (F.CATALOG and F.CATALOG[prof] and F.CATALOG[prof][id] and F.CATALOG[prof][id].blueprint == true))
         if type(recipe) == "table" and F.Integer(recipe.out, 1, 2147483647) and type(recipe.r) == "table"
-            and (proc or F.ItemMeta(recipe.out).sell ~= 0 or (db.sellAH == true and F.AuctionPrice(recipe.out))
-                or (F.SellDE() and (F.Disenchant.ValueOf(recipe.out) or 1) > 0)) then   -- (a result nobody buys is only ever a material)
+            and (proc or blueprint or F.ItemMeta(recipe.out).sell ~= 0 or (db.sellAH == true and F.AuctionPrice(recipe.out))
+                or (F.SellDE() and (F.Disenchant.ValueOf(recipe.out) or 1) > 0)) then   -- (a result nobody buys is only ever a material; a Blueprint's result is a station: always listed)
             local item = F.ItemMeta(recipe.out)
             if unknown and F.Integer(recipe.item, 1, 2147483647) then F.ItemMeta(recipe.item) end   -- (the recipe item's data is asked for now, so its bind type is there at the hover and kept for the next session)
             -- (an unlearned recipe waits for the item data; Cooking's catalog also keeps food only, the others' lists every result a vendor or the AH buys, as for a learned one)
-            if unknown and (item.class == nil or (prof == "cooking" and not F.IsFood(item))) then return end
+            if unknown and (item.class == nil or (prof == "cooking" and not F.IsFood(item) and not blueprint)) then return end
             local seconds, secondsFrom = F.CraftSeconds(id)
             -- Materials the player makes cheaper than they can buy them: costed by their own materials, and their
             -- casting time added to this recipe's.
@@ -1118,7 +1170,7 @@ local function BuildRowsOf(prof)
             -- the optional AH comparison: what the finished food would fetch on the auction house
             local ah = F.AuctionPrice(recipe.out)
             local vendor = item.sell   -- vendorValue is the other side of the comparison column in "Sell at AH" mode
-            rows[#rows + 1] = { id = id, recipe = recipe, ev = ev, item = item, via = via, unknown = unknown or nil,
+            rows[#rows + 1] = { id = id, recipe = recipe, ev = ev, item = item, via = via, unknown = unknown or nil, blueprint = blueprint or nil,
                 ahValue = ah and ah * ev.yield or nil,
                 vendorValue = (vendor and vendor > 0) and vendor * ev.yield or nil,
                 name = recipe.name or item.name or ("Recipe " .. id) }

@@ -184,7 +184,9 @@ F.activeCaps = {}   -- [itemID] = { cap = copper per unit, need = units asked fo
 
 -- The units listed at or under `cap` (copper per unit) for a commodity whose listings the game has loaded:
 -- { units, cost, cheapest, nextPrice, levels }, or nil and why.
-function F.CommodityDepth(itemID, cap)
+-- `probe` (units, optional): also returns `priceAt`, the unit price reached once that many units are counted from the cheapest up (today's price for a
+-- purchase that size; one stray cheap unit at the top of the ladder does not set it).
+function F.CommodityDepth(itemID, cap, probe)
     local api = _G.C_AuctionHouse
     if not (F.Has(api, "GetNumCommoditySearchResults") and F.Has(api, "GetCommoditySearchResultInfo")) then return nil, "api" end
     local count = api.GetNumCommoditySearchResults(itemID)
@@ -198,7 +200,10 @@ function F.CommodityDepth(itemID, cap)
     end
     table.sort(ladder, function(a, b) return a.price < b.price end)
     local depth = { units = 0, cost = 0, levels = #ladder, cheapest = ladder[1] and ladder[1].price or nil }
+    local running = 0
     for _, step in ipairs(ladder) do
+        running = running + step.quantity
+        if probe and not depth.priceAt and running >= probe then depth.priceAt = step.price end
         if step.price <= cap then
             depth.units = depth.units + step.quantity
             depth.cost = depth.cost + step.quantity * step.price
@@ -206,6 +211,7 @@ function F.CommodityDepth(itemID, cap)
             depth.nextPrice = step.price
         end
     end
+    if probe and not depth.priceAt and #ladder > 0 then depth.priceAt = ladder[#ladder].price end   -- fewer units listed than the probe: the dearest
     return depth
 end
 
@@ -255,13 +261,65 @@ local function CraftsOf(a, id)
     return math.floor((bought + math.min(unitsLeft, remainingNow)) / (a.qty or 1))
 end
 
+-- A price limit, and never more than a vendor charges for the material (the saved price per unit from the last visit, rounded down; never 0, which
+-- Auctionator reads as "no maximum"). nil stays nil when there is no vendor price.
+local function VendorLimited(id, cap)
+    local saved = F.db.vendorBuy and F.db.vendorBuy[id]
+    local vendorUnit = type(saved) == "table" and F.Number(saved.c) and saved.c > 0 and saved.c or nil
+    if vendorUnit then
+        local vendorCap = math.max(1, math.floor(vendorUnit))
+        cap = cap and math.min(cap, vendorCap) or vendorCap
+    end
+    return cap
+end
+
+-- The recipe's evaluation with the auction materials priced at what their listings showed (`list.live`, copper per unit) instead of the price
+-- Auctionator had stored: the same margin and odds rules then give limits that fit today's listings (human, 2026-11-27: the limit came from an older,
+-- lower stored price than the live listings, so nothing was "under the limit"). A copy; the row's own evaluation is never changed.
+local function EvaluatedAtLivePrices(ev, live)
+    if not (ev and live and next(live)) then return ev end
+    local copy = {}
+    for key, value in pairs(ev) do copy[key] = value end
+    copy.reagents = {}
+    for index, line in ipairs(ev.reagents) do
+        local price = line.id and live[line.id]
+        if price and F.Number(line.unit) and line.unit > 0 and F.Number(line.total) then
+            local changed = {}
+            for key, value in pairs(line) do changed[key] = value end
+            changed.total = line.total * price / line.unit
+            changed.unit = price
+            copy.reagents[index] = changed
+        else
+            copy.reagents[index] = line
+        end
+    end
+    return copy
+end
+
 local function EvaluateDepth(itemID)
     local active = F.Integer(itemID, 1, 2147483647) and F.activeCaps[itemID] or nil
     if not active then return end
     active.evals = (active.evals or 0) + 1   -- (/dpp depth)
     local cap = active.cap
     local item = F.ItemLink(itemID, active.name)   -- (the material, as a link in every line below)
-    local depth, why = F.CommodityDepth(itemID, cap)
+    local depth, why = F.CommodityDepth(itemID, cap, math.max(1, math.ceil((active.need or 1) * 0.1)))
+    -- Today's price for this material, from its listings (what the first tenth of the units wanted costs): the limit is worked out again at the live
+    -- prices of the materials whose listings have been read, under the same margin, odds and number of crafts as the list (it can go up as well as down)
+    local liveEv, unmetCrafts = active.ev, nil
+    if depth and active.ev and active.opts and active.list and depth.priceAt and depth.priceAt >= 1 then
+        active.live = depth.priceAt
+        active.list.live = active.list.live or {}
+        active.list.live[itemID] = depth.priceAt
+        liveEv = EvaluatedAtLivePrices(active.ev, active.list.live)
+        local planned = active.list.planned or 0
+        local caps = planned >= 1 and F.Calc.PlanCaps(liveEv, active.opts, planned) or nil
+        if caps and caps[active.index] then
+            cap = VendorLimited(itemID, caps[active.index])
+        else
+            cap, unmetCrafts = 0, planned   -- at today's prices no limit meets the margin and odds for the crafts the list is for
+        end
+        if cap ~= active.cap then depth = F.CommodityDepth(itemID, cap, 1) or depth end
+    end
     if not depth then
         if not active.warned then
             active.warned = true
@@ -285,10 +343,16 @@ local function EvaluateDepth(itemID)
             if crafts and crafts < others then others = crafts end
         end
     end
-    if active.ev and active.opts then
+    -- (unmetCrafts: set when no price at all meets the margin and odds for the crafts the units under the limit make)
+    if active.ev and active.opts and cap >= 1 then
         for _ = 1, 25 do
             local crafts = math.min(math.floor((gained + math.min(depth.units, remaining)) / qty), others)
-            local tighter = (F.Calc.PlanCaps(active.ev, active.opts, crafts) or {})[active.index] or 0
+            -- no craft at all (nothing listed under the limit): the limit stays what it was, it is not "0c" (human report 2026-11-27: Tender Crab Meat
+            -- "none at or under 0c (cheapest 7s)" after the murloc eyes were limited to 78 crafts)
+            if crafts < 1 then break end
+            local caps = F.Calc.PlanCaps(liveEv, active.opts, crafts)
+            local tighter = caps and caps[active.index] and VendorLimited(itemID, caps[active.index]) or 0
+            if not caps then unmetCrafts = crafts end
             if tighter >= cap then break end
             cap = tighter
             if cap < 1 then
@@ -300,6 +364,7 @@ local function EvaluateDepth(itemID)
     end
     -- (the key leaves out the number of price levels and the cost, so a ladder that is still filling in or a
     -- refresh that changes nothing says nothing again)
+    active.liveCap = cap   -- (/dpp depth and the tests: the limit this material is checked against now)
     local target = math.min(depth.units, remaining)
     -- the crafts the units under the limit make; the list's fewest decides: a material that is plentiful is only bought for the crafts the scarcest
     -- one allows (2 Murloc Eye and 1 Tender Crab Meat a craft: 108 eyes make 54 crafts, so 54 crab meat, not hundreds)
@@ -346,9 +411,13 @@ local function EvaluateDepth(itemID)
     -- Only what needs your attention gets a line: nothing under the limit, or fewer units than the quantity
     -- box would buy. When every unit still to buy is under the limit there is nothing to say.
     -- (a drop of a copper or two is not worth saying)
-    local lowered = (active.cap - cap) / active.cap >= 0.02 and (" (limit lowered to " .. limit .. ")") or ""
+    local change = (cap - active.cap) / active.cap
+    local lowered = math.abs(change) >= 0.02 and (" (limit " .. (change > 0 and "raised" or "lowered") .. " to " .. limit .. (active.live and (" for today's price " .. F.Money(active.live)) or "") .. ")") or ""
     if remaining == 0 then
         F.Print(string.format("%s: already have the %d%s.", item, active.need, set and "; quantity set to 0" or ""))
+    elseif depth.units == 0 and unmetCrafts then
+        F.Print(string.format("%s: no price meets your odds for %d crafts (cheapest %s)%s.", item, unmetCrafts,
+            depth.cheapest and F.Money(depth.cheapest) or "-", set and "; quantity set to 0" or ""))
     elseif depth.units == 0 then
         F.Print(string.format("%s: none at or under %s%s%s.", item, limit,
             depth.cheapest and (" (cheapest " .. F.Money(depth.cheapest) .. ")") or "", set and "; quantity set to 0" or ""))
@@ -358,7 +427,10 @@ local function EvaluateDepth(itemID)
     elseif depth.units < remaining then
         F.Print(string.format("%s: %d of %d under %s%s - %s %d.", item, depth.units, remaining, limit, lowered,
             set and "quantity set to" or "set quantity to", target))
+    elseif lowered ~= "" and active.lastSaid ~= limit then
+        F.Print(string.format("%s:%s.", item, lowered))   -- everything wanted is under the limit, but the limit moved with today's price: say so once
     end
+    active.lastSaid = limit
     -- this material is now the one that decides the crafts: say what that means for the other materials of the list (their windows
     -- may already have been seen, or are still to be opened)
     if list and not limitedBy and craftsHere <= others and craftsHere < (list.announced or list.planned or math.huge) and craftsHere < (list.planned or math.huge) then
@@ -384,8 +456,8 @@ function F.DepthReport()
         any = true
         local list = a.list
         local crafts = list and CraftsOf(a, id)
-        lines[#lines + 1] = string.format("%s: limit %s each, wanted %s, held at the list %s now %s; seen %dx%s; units under it %s, crafts it allows %s, others allow %s, target %s; buy window %s%s%s.",
-            F.ItemLink(id, a.name), F.Money(a.cap or 0), tostring(a.need), tostring(a.owned0), tostring(F.Owned(id)), a.evals or 0,
+        lines[#lines + 1] = string.format("%s: limit %s each%s, wanted %s, held at the list %s now %s; seen %dx%s; units under it %s, crafts it allows %s, others allow %s, target %s; buy window %s%s%s.",
+            F.ItemLink(id, a.name), F.Money(a.cap or 0), a.live and (" at the list (live price " .. F.Money(a.live) .. ")") or "", tostring(a.need), tostring(a.owned0), tostring(F.Owned(id)), a.evals or 0,
             (a.evals or 0) == 0 and " (its listings have not been read: open its buy window)" or "", tostring(a.units), tostring(crafts), tostring(a.others or "-"), tostring(a.target),
             a.boxSeen == nil and "not looked at" or (a.boxSeen and ("found, showed " .. tostring(a.boxShown)) or "NOT found"), a.reapplied and (", lowered again " .. a.reapplied .. "x") or "",
             a.warned and ", listings unreadable" or "")
@@ -412,14 +484,7 @@ end
 -- never more than a vendor charges for it. The vendor price is the saved price per unit from the last visit (1s2c for a bundle of 5 is 20.4c), rounded
 -- down, so the auction house is only used when it is no dearer than the vendor. nil when there is no limit at all.
 function F.MaterialCap(plan, index, id)
-    local cap = plan and plan.caps[index] or nil
-    local saved = F.db.vendorBuy and F.db.vendorBuy[id]
-    local vendorUnit = type(saved) == "table" and F.Number(saved.c) and saved.c > 0 and saved.c or nil
-    if vendorUnit then
-        local vendorCap = math.max(1, math.floor(vendorUnit))   -- (never 0: Auctionator reads a maximum of 0 as "no maximum")
-        cap = cap and math.min(cap, vendorCap) or vendorCap
-    end
-    return cap
+    return VendorLimited(id, plan and plan.caps[index] or nil)
 end
 
 ---------------------------------------------------------------------------

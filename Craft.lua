@@ -14,7 +14,7 @@ F.Craft = C
 
 local MAX = 2147483647
 
--- The profession (cooking, engineering, tailoring) the open window is, or nil when it is neither one of those nor the player's own.
+-- The profession (cooking, engineering, tailoring, leatherworking) the open window is, or nil when it is neither one of those nor the player's own.
 function C.WindowProfession()
     local api = _G.C_TradeSkillUI
     if not F.Has(api, "GetBaseProfessionInfo") then return nil end

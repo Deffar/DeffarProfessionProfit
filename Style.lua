@@ -24,6 +24,13 @@ S.SAGE, S.SAND, S.CLAY, S.TEAL, S.GREYTEXT = SAGE, SAND, CLAY, TEAL, GREYTEXT
 S.GREEN, S.RED = "|cff59e659", "|cffff6666"
 S.GOLDCODE = "|cffffd100"   -- the title gold as a colour code (the "Craft:" label of the "+" tooltips)   -- the + and - of a profit; also "you have it" and "something is missing"
 
+-- The ring that closes in on a map pin (Waypoint.lua): the picture is ring.tga (tools/make_dpp_ring.py, the title gold). It starts as the installed
+-- Dungeon Master addon's ring does (2.0.3: 3 times its size, shrinking to 0.8, fading in then out) but 25% slower (human request 2026-11-27),
+-- and repeats 3 times. SIZE is its share of the map's larger side. Under the ring, the four small golden-brown triangles of triangles.tga (north,
+-- east, south, west; another picture, so they stay brown) turn clockwise DEGREES (a quarter of the circle) during each pulse.
+S.PULSE = { TEXTURE = "Interface\\AddOns\\DeffarProfessionProfit\\ring", TRIANGLES = "Interface\\AddOns\\DeffarProfessionProfit\\triangles",
+    SIZE = 0.05, FROM = 3, TO = 0.8, CLOSE = 0.4375, FADE_IN = 0.225, FADE_OUT = 0.3125, LOOPS = 3, DEGREES = 90 }
+
 function S.Paint(code, text) return code .. text .. "|r" end
 
 function S.Plural(n, one, many) return n .. " " .. (n == 1 and one or many) end

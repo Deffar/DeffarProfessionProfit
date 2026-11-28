@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.48.0
+- **Five more profession tabs: Leatherworking, Alchemy, Blacksmithing, First Aid and Mining.** Each lists the recipes you have learned with their cost, value and profit per hour, like Cooking, Engineering and Tailoring (`/dpp leatherworking`, `/dpp alchemy`, `/dpp blacksmithing`, `/dpp firstaid`, `/dpp mining`). Open each profession window once so its recipes are saved.
+- **Tab order:** Cooking first, then your two main professions in the order the game lists them, then First Aid.
+- **Known recipes for every profession.** Untick the box to see the recipes you have not learned: Leatherworking (473), Alchemy (163), Blacksmithing (401), First Aid (26) and Mining (14) now have it too. **Blueprints** (the crafting stations: Anvil, Master Forge, Tanning Rack, Fermenter, campfires and more) are listed for every profession.
+- **Where a recipe comes from.** The tooltip of a recipe you have not learned reads: name, how it binds, skill, source, and a new **Zone** line. **Ctrl-click** pins it on the map:
+  - a vendor or a quest giver (Cooking, Engineering and Tailoring quest recipes included);
+  - for a recipe that drops from a creature, the middle of where that creature stands;
+  - for a recipe a trainer teaches, the nearest trainer of that profession.
+  A ring closes in on the pin when the map opens. A creature inside an instance has no spot on the map: the zone is shown and the click says so.
+- **Golden "?" button beside the X.** Shows how to get your next profession rank for the tab you are on: your skill against what the rank needs (green once you have it), the player level it needs, the nearest trainer, the book's vendor and auction price, or the quest giver, and where. Click it to pin the place. It covers Cooking, Engineering, Tailoring, Leatherworking, Alchemy, Blacksmithing, First Aid, Mining and Enchanting.
+- **Cooking Effect dropdown.** Pick a buff (Stamina, Strength, Agility, Intellect, Spirit, Spell damage, Healing, Mana regen, Health regen, Fishing, Other buff, No buff) to list only the foods that give it. A **Stat** column shows the number; Shift-click another heading to sort inside each stat value, so equal stats show the cheapest-to-make or best-earning one first.
+- **The Rank button** moved to the tab row (Cooking tab only), and the search box is narrower and lines up with the rows below.
+- **`[A]` price limits follow today's price.** After you search an item the limit is worked out again from the prices the auction house just showed, still inside your margin and odds. When nothing is cheap enough the message says which price it could not meet instead of "0c".
+- **Fixed:** a saved Profit per hour sort was reset to Profit when you logged in.
+
 ## 0.47.0
 - **Nearest vendor for a material.** Hover a material's icon or name in a recipe's details: for a material a vendor sells (spices, milk, thread, stout skin and more) the tooltip names the nearest vendor with the distance, plus how many more there are. **Ctrl-click** the icon or the name to pin that vendor on the map. Vendors are filtered to your faction. The data holds 150 vendors for 69 materials, with every capital city covered (Stormwind, Ironforge, Darnassus, Orgrimmar, Undercity, Thunder Bluff).
 - **Shift-click a material** to search for it in Auctionator or TSM. Hovering a material's icon shows the item itself.

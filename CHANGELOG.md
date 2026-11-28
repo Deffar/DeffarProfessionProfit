@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.48.1
+- **The Auction House row in the luck window shows what you really sold for.** For a recipe ticked "sold at the AH", Gained is the money your AH sales brought in (after the 5% cut and the deposits), Spent is the materials of the units sold, and Profit and Per hr follow from those. A change in today's price no longer moves them. Crafts not sold through the AH are not counted, and a recipe with nothing recorded as sold shows "-". Before this the row valued every craft you had ever made at today's price.
+
 ## 0.48.0
 - **Five more profession tabs: Leatherworking, Alchemy, Blacksmithing, First Aid and Mining.** Each lists the recipes you have learned with their cost, value and profit per hour, like Cooking, Engineering and Tailoring (`/dpp leatherworking`, `/dpp alchemy`, `/dpp blacksmithing`, `/dpp firstaid`, `/dpp mining`). Open each profession window once so its recipes are saved.
 - **Tab order:** Cooking first, then your two main professions in the order the game lists them, then First Aid.

@@ -394,6 +394,31 @@ function S.Aggregate(scope, keep, costOf)
     return out
 end
 
+-- What the ledger of one scope really recorded for one item, for the luck window's Auction House row (Luck.lua Aggregate): the units sold,
+-- the money received (m) and the deposits paid (d), pooled over every ledger row that is this item. A row is this item when its saved
+-- item ID is `id`; a row with no saved ID is when its name is in `names` (a set). A row with another ID is never this item, whatever its name.
+-- Returns nil when no unit of it sold. Net is m - d, as the AH sales tab's Profit counts it; it can be negative.
+function S.Recorded(scope, id, names)
+    local root = S.Root(scope)
+    if not root then return nil end
+    local sum = { sold = 0, m = 0, d = 0, partial = false }
+    for name, entry in pairs(root) do
+        if type(entry) == "table" and F.String(name) then
+            local eid = F.Integer(entry.id, 1, MAX) and entry.id or nil
+            local hit
+            if eid then hit = id ~= nil and eid == id else hit = type(names) == "table" and names[name] == true end
+            if hit then
+                local function N(key) return F.Number(entry[key]) and entry[key] >= 0 and entry[key] or 0 end
+                sum.sold, sum.m, sum.d = sum.sold + N("s"), sum.m + N("m"), sum.d + N("d")
+                if N("s") + math.max(0, N("e") - N("r")) > N("p") then sum.partial = true end   -- (as Aggregate's item.partial)
+            end
+        end
+    end
+    if sum.sold <= 0 then return nil end
+    sum.net = sum.m - sum.d
+    return sum
+end
+
 ---------------------------------------------------------------------------
 -- Hooks
 ---------------------------------------------------------------------------

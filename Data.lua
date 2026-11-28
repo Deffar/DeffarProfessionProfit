@@ -2,7 +2,7 @@
 -- caches, the Master Chef rank read, and the list of rows the window shows. No frames (UI.lua) and
 -- no event registration (Core.lua). The arithmetic is in Calc.lua.
 local addonName, F = ...
-F.VERSION = "0.48.0"
+F.VERSION = "0.48.1"
 F.CALLER = addonName   -- Auctionator wants the calling addon's name as its first argument
 F.eventIssues = {}
 

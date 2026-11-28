@@ -527,17 +527,28 @@ function L.Aggregate(scope, filterID, prof)
                 item.secs = item.k * item.sec
                 if not item.ah then total.secs = total.secs + item.secs end
                 if item.ah then
-                    -- Its money at the auction house: what the crafts made (a craft's yield and its extras) at today's Auctionator price less the
-                    -- cut, against what the materials cost (item.s, as the vendor figures use). Only the crafts that were priced (k of c) count.
+                    -- Its money at the auction house is what the AH sales ledger of the same scope recorded for the units SOLD (Sales.Recorded):
+                    -- Gained = money received less deposits paid (m - d), never today's price. Spent = the materials of those units, at the average
+                    -- unit cost of this item's priced crafts (item.s over the units they made). Casting time = those units' share of the crafts.
+                    -- Crafts not sold (yet) are not counted. Nothing sold on record: no ahView (the cells say so).
                     local at = out.ahTotal
                     for _, key in ipairs({ "c", "x", "o", "expected", "variance" }) do at[key] = at[key] + item[key] end
                     at.count = at.count + 1
-                    local price = item.out and F.AuctionPrice(item.out) or nil
-                    if price and item.k > 0 and item.c > 0 then
-                        local net = math.floor(price * (1 - F.AH_CUT))
-                        local units = (item.c * item.y + item.x) * item.k / item.c
-                        item.ahView = { s = item.s, g = math.floor(units * net + 0.5), k = item.k, u = item.u, secs = item.secs, units = units, net = net }
-                        at.s, at.g, at.k, at.u, at.secs = at.s + item.s, at.g + item.ahView.g, at.k + item.k, at.u + item.u, at.secs + item.secs
+                    local names = {}
+                    if F.String(entry.name) then names[entry.name] = true end
+                    local made = item.out and F.ItemMeta(item.out).name or nil
+                    if F.String(made) then names[made] = true end
+                    local rec = F.Sales and F.Sales.Recorded(scope, item.out, names) or nil
+                    if rec then
+                        local perCraft = item.c > 0 and (item.y + item.x / item.c) or item.y   -- units one craft makes, extras included
+                        local spent, unpriced = 0, item.c
+                        if item.k > 0 and item.c > 0 then
+                            spent = math.floor(item.s / (item.k * perCraft) * rec.sold + 0.5)   -- the average cost of one unit, times the units sold
+                            unpriced = item.u
+                        end
+                        item.ahView = { s = spent, g = rec.net, k = rec.sold, u = unpriced, secs = rec.sold / perCraft * item.sec, sold = rec.sold,
+                            received = rec.m, deposits = rec.d, partial = rec.partial, recorded = true }
+                        at.s, at.g, at.k, at.u, at.secs = at.s + spent, at.g + rec.net, at.k + rec.sold, at.u + unpriced, at.secs + item.ahView.secs
                     else
                         at.unpriced = at.unpriced + 1
                     end

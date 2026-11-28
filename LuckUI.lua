@@ -133,12 +133,12 @@ local function Cells(r)
     local rankZero = r.ranks and r.ranks[0] and r.ranks[0].x > 0
     if rankZero then cells.luck = { "extras?!", W.RED }   -- nothing is expected at rank 0: the assumption would be wrong
     else cells.luck = { LuckText(r.z) } end
-    -- the money: the vendor figures, or for an item marked as sold at the AH its crafts at today's AH prices (Luck.lua ahView), as the
-    -- "Auction House" row under the Total does for all of those together; "AH" when Auctionator has no price for it
+    -- the money: the vendor figures, or for an item marked as sold at the AH what the AH sales ledger recorded for the units sold (Luck.lua
+    -- ahView), as the "Auction House" row under the Total does for all of those together; "-" while none of it is recorded as sold
     local m = r
     if r.ah then m = r.ahView or { k = 0 } end
-    if r.ah and not r.ahView then
-        cells.spent, cells.gained, cells.profit, cells.hour = { "AH", W.GREY }, { "AH", W.GREY }, { "AH", W.GREY }, { "AH", W.GREY }
+    if r.ah and not r.ahView then   -- nothing of it recorded as sold at the AH yet (see its tooltip)
+        cells.spent, cells.gained, cells.profit, cells.hour = { "-", W.GREY }, { "-", W.GREY }, { "-", W.GREY }, { "-", W.GREY }
     elseif m.k > 0 then
         local star = m.u > 0 and " |cffff9933*|r" or ""
         cells.spent = { F.Money(m.s) .. star, W.TEXT }
@@ -184,7 +184,7 @@ local Items, Crafts, Seconds, Grey, ItemLabel = St.Items, St.Crafts, St.Seconds,
 
 -- What each control of the window says on hover: the same short labelled lines as the main window's toolbar (UI.lua ShowControlTip).
 local TIPS = {}
-function TIPS.ah() return { "Sold at AH", { "Counts", "at AH prices" }, { "Row", "Auction House, not Vendor" } } end
+function TIPS.ah() return { "Sold at AH", { "Counts", "units sold, from AH sales" }, { "Row", "Auction House, not Vendor" } } end
 function TIPS.del(armed)
     if armed then return { "Delete row", { text = "Click again to delete", color = { 1, 0.4, 0.4 } } } end
     return { "Delete row", { "Scope", "this one only" }, { hint = "Click twice" } }
@@ -251,7 +251,7 @@ local function ShowTip(row, refresh)
     else
         Line(tip, "Crafts", Paint(SAND, tostring(item.c)))
     end
-    if item.ah then Note(tip, "Sold at AH: AH prices, Auction House row") end
+    if item.ah then Note(tip, "Sold at AH: money from AH sales, Auction House row") end
     W.ShowLines(row, tip, refresh)
 end
 
@@ -293,16 +293,22 @@ local function ShowProfitTip(row, refresh)
         W.ShowLines(row, tip, refresh)
         return
     end
-    local view = item.ahView   -- sold at the AH: the crafts at today's Auctionator price less the cut
+    local view = item.ahView   -- sold at the AH: what the AH sales ledger recorded for the units sold
     if item.ah and not view then
-        Note(tip, "No AH price: see the AH sales tab")
-    elseif view or item.k > 0 then
-        local made = view and view.g or item.g
+        Note(tip, "None recorded as sold at the AH yet")
+    elseif view then
+        Line(tip, Grey("Received: ") .. Items(view.sold) .. Grey(" sold"), F.Money(view.received))
+        Line(tip, "Deposits paid", F.Money(view.deposits))
+        Line(tip, Grey("Materials: ") .. Items(view.sold) .. Grey(" sold x ") .. F.Money(view.sold > 0 and math.floor(view.s / view.sold) or 0), F.Money(view.s))
+        Line(tip, "Profit", Signed(view.g - view.s))
+        if item.secs and view.secs > 0 then Line(tip, "Per hour", Signed((view.g - view.s) * 3600 / view.secs)) end
+        Note(tip, "Only units sold at the AH count; " .. item.c .. " crafted")
+        if view.partial then Note(tip, "* some units were posted before this addon watched") end
+    elseif item.k > 0 then
+        local made = item.g
         local profit = made - item.s
         local units = item.c * (F.Number(item.y) and item.y or 1) + item.x
-        if view then
-            Line(tip, Grey("Made: ") .. Items(math.floor(view.units + 0.5)) .. Grey(" x ") .. F.Money(view.net) .. Grey(" (AH, after the cut)"), F.Money(made))
-        elseif item.u == 0 and units > 0 then
+        if item.u == 0 and units > 0 then
             Line(tip, Grey("Made: ") .. Items(units) .. Grey(" x ") .. F.Money(math.floor(item.g / units)), F.Money(item.g))
         else
             Line(tip, "Made, at the vendor price", F.Money(item.g))
@@ -799,7 +805,7 @@ function U.Refresh()
         summaryH = F.Number(h) and math.ceil(h) or 14
     end
     local block = summaryH > 0 and (4 + summaryH) or 0   -- the notes under the Total row
-    -- one more row under the Total: the items marked as sold at the AH, added up at today's AH prices (tabs with recipes only)
+    -- one more row under the Total: the items marked as sold at the AH, added up from what the AH sales ledger recorded (tabs with recipes only)
     -- The main row is "Vendor" on a tab with recipes (the items not ticked); it is left out when every item is ticked.
     local hasAH = hasTotal and ahCount > 0
     local hasVendor = hasTotal and data.recipes - ahCount > 0
